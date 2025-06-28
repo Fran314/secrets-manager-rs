@@ -1,0 +1,22 @@
+[package]
+name = "secrets-manager-rs"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "secrets-manager"
+path = "src/main.rs"
+
+[dependencies]
+age = "0.11.1"
+anyhow = "1.0.98"
+clap = { version = "4.5.40", features = ["derive"] }
+dirs = "6.0.0"
+gethostname = "1.0.2"
+regex = "1.11.1"
+rpassword = "7.4.0"
+serde = { version = "1.0.219", features = ["derive"] }
+sha256 = "1.6.0"
+thiserror = "2.0.12"
+toml = "0.8.23"
+walkdir = "2.5.0"
