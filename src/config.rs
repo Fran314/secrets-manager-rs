@@ -70,7 +70,7 @@ pub fn get_config_file() -> Result<std::path::PathBuf, LoadConfigError> {
     }
 
     let user = dirs::config_dir().ok_or(LoadConfigError::GetConfigDirFail)?;
-    let user = user.join("secrets-manger.toml");
+    let user = user.join("secrets-manager").join("secrets-manager.toml");
     if user.exists() {
         return Ok(user);
     }
