@@ -1212,7 +1212,6 @@ dependencies = [
  "sha256",
  "thiserror 2.0.12",
  "toml 0.8.23",
- "walkdir",
 ]
 
 [[package]]

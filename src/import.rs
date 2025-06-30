@@ -5,12 +5,11 @@ use thiserror::Error;
 use crate::{
     checksum,
     config::{Config, ImportInfo},
-    crypto,
+    crypto, safe_fs,
 };
 
-enum ImportFileSuccess {
-    Write,
-    Skip,
+fn format_path(path: &str, profile: &str) -> std::path::PathBuf {
+    std::path::PathBuf::from(&path.replace("$profile", profile))
 }
 
 #[derive(Error, Debug)]
@@ -24,24 +23,17 @@ pub enum ImportFileError {
     #[error("failed to decrypt contents of source file at '{0}'\n{1}")]
     DecryptionFail(String, age::DecryptError),
 
-    #[error(
-        "failed to read file at endpoint ('{0}', which already exists) while attempting to check that its content matches the intended content\n{1}"
-    )]
-    ReadExistingFail(String, std::io::Error),
-
-    #[error(
-        "file at endpoint ('{1}') already exists but does not contain the decryption of the content of the source file ('{0}'). This program won't override existing file at endpoint"
-    )]
-    CompareExistingFail(String, String),
-
-    #[error("failed to write to file at endpoint ('{0}')\n{1}")]
-    WriteFail(String, std::io::Error),
+    #[error("failed to safely write file at endpoint ('{0}')\n{1}")]
+    SafeWrite(String, safe_fs::SafeFsError),
 
     #[error("failed to assign ownership to file at endpoint ('{0}')\n{1}")]
     ChownFail(String, std::io::Error),
 
     #[error("failed to assign permissions to file at endpoint ('{0}')\n{1}")]
     ChmodFail(String, std::io::Error),
+
+    #[error("failed to verify integrity of imported file at '{0}'\n{1}")]
+    VerifyImport(String, checksum::ChecksumError),
 }
 impl ImportFileError {
     fn read_fail(source: &std::path::Path) -> impl Fn(std::io::Error) -> Self {
@@ -56,19 +48,8 @@ impl ImportFileError {
         |e| Self::DecryptionFail(source.to_string_lossy().to_string(), e)
     }
 
-    fn read_existing_fail(endpoint: &std::path::Path) -> impl Fn(std::io::Error) -> Self {
-        |e| Self::ReadExistingFail(endpoint.to_string_lossy().to_string(), e)
-    }
-
-    fn compare_existing(source: &std::path::Path, endpoint: &std::path::Path) -> Self {
-        Self::CompareExistingFail(
-            source.to_string_lossy().to_string(),
-            endpoint.to_string_lossy().to_string(),
-        )
-    }
-
-    fn write_fail(endpoint: &std::path::Path) -> impl Fn(std::io::Error) -> Self {
-        |e| Self::WriteFail(endpoint.to_string_lossy().to_string(), e)
+    fn safe_write(endpoint: &std::path::Path) -> impl Fn(safe_fs::SafeFsError) -> Self {
+        |e| Self::SafeWrite(endpoint.to_string_lossy().to_string(), e)
     }
 
     fn chown_fail(endpoint: &std::path::Path) -> impl Fn(std::io::Error) -> Self {
@@ -78,21 +59,69 @@ impl ImportFileError {
     fn chmod_fail(endpoint: &std::path::Path) -> impl Fn(std::io::Error) -> Self {
         |e| Self::ChmodFail(endpoint.to_string_lossy().to_string(), e)
     }
+
+    fn verify_import(endpoint: &std::path::Path) -> impl Fn(checksum::ChecksumError) -> Self {
+        |e| Self::VerifyImport(endpoint.to_string_lossy().to_string(), e)
+    }
+}
+fn import_file<P, Q>(
+    filename: &str,
+    source: P,
+    endpoint: Q,
+    passphrase: &str,
+) -> Result<(), ImportFileError>
+where
+    P: AsRef<std::path::Path>,
+    Q: AsRef<std::path::Path>,
+{
+    let source = source.as_ref();
+    let endpoint = endpoint.as_ref();
+
+    let file_source = source.join(filename.to_string() + ".age");
+    let file_endpoint = endpoint.join(filename);
+
+    let sha_source = source.join(filename.to_string() + ".sha256");
+    let sha_endpoint = endpoint.join(filename.to_string() + ".sha256");
+
+    let encrypted_content =
+        fs::read(&file_source).map_err(ImportFileError::read_fail(&file_source))?;
+    let (file_perm, file_uid, file_gid) = {
+        let meta = fs::metadata(&file_source)
+            .map_err(ImportFileError::read_metadata_fail(&file_source))?;
+        (meta.permissions(), meta.uid(), meta.gid())
+    };
+    let decrypted_content = crypto::decrypt(encrypted_content, passphrase)
+        .map_err(ImportFileError::decryption_fail(&file_source))?;
+    safe_fs::safe_write(&file_endpoint, decrypted_content)
+        .map_err(ImportFileError::safe_write(&file_endpoint))?;
+    std::os::unix::fs::chown(&file_endpoint, Some(file_uid), Some(file_gid))
+        .map_err(ImportFileError::chown_fail(&file_endpoint))?;
+    std::fs::set_permissions(&file_endpoint, file_perm)
+        .map_err(ImportFileError::chmod_fail(&file_endpoint))?;
+
+    let sha_content = fs::read(&sha_source).map_err(ImportFileError::read_fail(&sha_source))?;
+    let (sha_perm, sha_uid, sha_gid) = {
+        let meta =
+            fs::metadata(&sha_source).map_err(ImportFileError::read_metadata_fail(&sha_source))?;
+        (meta.permissions(), meta.uid(), meta.gid())
+    };
+    safe_fs::safe_write(&sha_endpoint, sha_content)
+        .map_err(ImportFileError::safe_write(&sha_endpoint))?;
+    std::os::unix::fs::chown(&sha_endpoint, Some(sha_uid), Some(sha_gid))
+        .map_err(ImportFileError::chown_fail(&sha_endpoint))?;
+    std::fs::set_permissions(&sha_endpoint, sha_perm)
+        .map_err(ImportFileError::chmod_fail(&sha_endpoint))?;
+
+    checksum::verify_file_checksum(&endpoint, filename)
+        .map_err(ImportFileError::verify_import(&file_endpoint))?;
+
+    Ok(())
 }
 
 #[derive(Error, Debug)]
 pub enum ImportSourceError {
-    #[error("failed to create endpoint directory '{0}'\n{1}")]
-    CreateEndpointFail(String, std::io::Error),
-
-    #[error("failed to verify integrity of source '{0}'\n{1}")]
-    VerifySourceFail(String, checksum::VerifyError),
-
     #[error("failed to import file '{0}'\n{1}")]
     ImportFileFail(String, ImportFileError),
-
-    #[error("failed to verify integrity of import '{0}'\n{1}")]
-    VerifyImportFail(String, checksum::VerifyError),
 
     #[error("cannot create symlink at path '{0}' as path already exists and isn't a symlink")]
     SymlinkIsNotSymlink(String),
@@ -104,83 +133,14 @@ pub enum ImportSourceError {
     CreateSymlinkFail(String, std::io::Error),
 }
 impl ImportSourceError {
-    fn create_endpoint_fail(endpoint: &std::path::Path) -> impl Fn(std::io::Error) -> Self {
-        |e| Self::CreateEndpointFail(endpoint.to_string_lossy().to_string(), e)
-    }
-
-    fn verify_source_fail(source: &std::path::Path) -> impl Fn(checksum::VerifyError) -> Self {
-        |e| Self::VerifySourceFail(source.to_string_lossy().to_string(), e)
-    }
-
     fn import_file_fail(file: String) -> impl FnOnce(ImportFileError) -> Self {
         |e| Self::ImportFileFail(file, e)
-    }
-
-    fn verify_import_fail(import: &std::path::Path) -> impl Fn(checksum::VerifyError) -> Self {
-        |e| Self::VerifyImportFail(import.to_string_lossy().to_string(), e)
     }
 
     fn create_symlink_fail(endpoint: &std::path::Path) -> impl Fn(std::io::Error) -> Self {
         |e| Self::CreateSymlinkFail(endpoint.to_string_lossy().to_string(), e)
     }
 }
-
-#[derive(Error, Debug)]
-pub enum ImportError {
-    #[error(transparent)]
-    ImportSourceFail(ImportSourceError),
-}
-
-fn format_path(path: &str, profile: &str) -> std::path::PathBuf {
-    std::path::PathBuf::from(&path.replace("$profile", profile))
-}
-
-fn import_file<P, Q>(
-    source: P,
-    endpoint: Q,
-    passphrase: &str,
-) -> Result<ImportFileSuccess, ImportFileError>
-where
-    P: AsRef<std::path::Path>,
-    Q: AsRef<std::path::Path>,
-{
-    let source = source.as_ref();
-    let endpoint = endpoint.as_ref();
-    let encrypted_content = fs::read(source).map_err(ImportFileError::read_fail(source))?;
-    let (perm, uid, gid) = {
-        let meta = fs::metadata(source).map_err(ImportFileError::read_metadata_fail(source))?;
-        (meta.permissions(), meta.uid(), meta.gid())
-    };
-
-    let decrypted_content = crypto::decrypt(encrypted_content, passphrase)
-        .map_err(ImportFileError::decryption_fail(source))?;
-
-    let success_type = match endpoint.exists() {
-        true => {
-            let actual_content =
-                fs::read(endpoint).map_err(ImportFileError::read_existing_fail(endpoint))?;
-
-            if decrypted_content != actual_content {
-                return Err(ImportFileError::compare_existing(source, endpoint));
-            }
-
-            ImportFileSuccess::Skip
-        }
-        false => {
-            fs::write(endpoint, decrypted_content)
-                .map_err(ImportFileError::write_fail(endpoint))?;
-
-            ImportFileSuccess::Write
-        }
-    };
-
-    std::os::unix::fs::chown(endpoint, Some(uid), Some(gid))
-        .map_err(ImportFileError::chown_fail(endpoint))?;
-    std::fs::set_permissions(endpoint, perm).map_err(ImportFileError::chmod_fail(endpoint))?;
-
-    Ok(success_type)
-}
-
 fn import_source<P>(
     profile: &str,
     source_root: P,
@@ -197,46 +157,14 @@ where
 
     println!("Importing files to '{}'...", &imports.endpoint);
 
-    fs::create_dir_all(&endpoint).map_err(ImportSourceError::create_endpoint_fail(&endpoint))?;
-
-    print!("verifying source integrity... ");
-    std::io::stdout().flush().unwrap();
-    checksum::verify_checksum(&source)
-        .map_err(ImportSourceError::verify_source_fail(&source))
-        .inspect_err(|_| println!("error"))?;
-    println!("ok");
-
-    let files = {
-        let mut files = imports.files.clone();
-        files.push("sha256sums.txt".to_string());
-        files
-    };
-    for file in &files {
-        let file_source = source.join(file.to_string() + ".age");
-        let file_endpoint = endpoint.join(file);
-
-        print!("importing '{file}'... ");
+    for filename in &imports.files {
+        print!("importing '{filename}'... ");
         std::io::stdout().flush().unwrap();
-        let file_success = import_file(file_source, file_endpoint, passphrase)
-            .map_err(ImportSourceError::import_file_fail(file.clone()))
+        import_file(filename, &source, &endpoint, passphrase)
+            .map_err(ImportSourceError::import_file_fail(filename.clone()))
             .inspect_err(|_| println!("error"))?;
-
-        match file_success {
-            ImportFileSuccess::Write => {
-                println!("ok");
-            }
-            ImportFileSuccess::Skip => {
-                println!("already in place");
-            }
-        }
+        println!("ok");
     }
-
-    print!("verifying import integrity... ");
-    std::io::stdout().flush().unwrap();
-    checksum::verify_checksum(&endpoint)
-        .map_err(ImportSourceError::verify_import_fail(&endpoint))
-        .inspect_err(|_| println!("error"))?;
-    println!("ok");
 
     if let Some(symlinks_to) = &imports.symlinks_to {
         print!("generating symlinks... ");
@@ -244,7 +172,7 @@ where
 
         let symlink_endpoint = format_path(symlinks_to, profile);
 
-        for file in &files {
+        for file in &imports.files {
             let symlink_source = endpoint.join(file);
             let symlink_endpoint = symlink_endpoint.join(file);
 
@@ -277,6 +205,14 @@ where
     Ok(())
 }
 
+#[derive(Error, Debug)]
+pub enum ImportError {
+    #[error(transparent)]
+    VerifySource(checksum::ChecksumError),
+
+    #[error(transparent)]
+    ImportSourceFail(ImportSourceError),
+}
 pub fn import(
     profile: &str,
     source: &str,
@@ -284,6 +220,14 @@ pub fn import(
     passphrase: &str,
 ) -> Result<(), ImportError> {
     let source_root = std::path::Path::new(source);
+
+    print!("Verifying source integrity... ");
+    std::io::stdout().flush().unwrap();
+    checksum::verify_checksums(source_root)
+        .map_err(ImportError::VerifySource)
+        .inspect_err(|_| println!("error"))?;
+    println!("ok");
+    println!();
 
     if let Some(imports) = config.imports.get("shared") {
         for import_info in imports {
@@ -301,66 +245,3 @@ pub fn import(
 
     Ok(())
 }
-// fn import_for_profile(
-//     profile: &String,
-//     identity: &Identity,
-//     source: &String,
-//     imports: &Vec<ExportInfo>,
-// ) -> Result<()> {
-//     let source_root = std::path::Path::new(source);
-//
-//     for import_info in imports.iter() {
-//         let source = to_path(&import_info.source, profile);
-//         let source = source_root.join(&source);
-//
-//         let endpoint = to_path(&import_info.endpoint, profile);
-//
-//         if !checksum::verify_checksum(&source)? {
-//             return Err(anyhow!("source checksum does not match"));
-//         }
-//
-//         crypto::decrypt(
-//             identity,
-//             source.join("sha256sums.txt.age"),
-//             endpoint.join("sha256sums.txt"),
-//         )?;
-//
-//         for file in &import_info.files {
-//             let file_source = source.join(file);
-//             let file_endpoint = endpoint.join(file.to_string() + ".age");
-//
-//             println!("exporting {file_source:?}");
-//
-//             crypto::encrypt(recipient, file_source, file_endpoint)?;
-//         }
-//
-//         println!("generating checksum");
-//         checksum::generate_checksum(
-//             &endpoint,
-//             &import_info
-//                 .files
-//                 .iter()
-//                 .map(|s| s.to_string() + ".age")
-//                 .collect(),
-//         )?;
-//
-//         println!("checking checksum");
-//         if !checksum::verify_checksum(&endpoint)? {
-//             return Err(anyhow!("endpoint checksum does not match"));
-//         }
-//     }
-//
-//     Ok(())
-// }
-// pub fn import(profile: &String, source: &String, config: &Config) -> Result<()> {
-//     let identity = crypto::get_passpharse_identity()?;
-//
-//     if let Some(imports) = config.exports.get("shared") {
-//         import_for_profile(profile, &identity, source, imports)?;
-//     }
-//
-//     if let Some(imports) = config.exports.get(profile) {
-//         import_for_profile(profile, &identity, source, imports)?;
-//     }
-//     todo!()
-// }

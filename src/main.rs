@@ -7,6 +7,7 @@ mod crypto;
 mod cli;
 mod export;
 mod import;
+mod safe_fs;
 mod verify_export;
 
 fn execute() -> Result<()> {

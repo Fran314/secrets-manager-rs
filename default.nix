@@ -1,6 +1,4 @@
 {
-  lib,
-  fetchFromGitHub,
   rustPlatform,
 }:
 
@@ -10,5 +8,5 @@ rustPlatform.buildRustPackage (finalAttrs: {
 
   src = ./.;
 
-  cargoHash = "sha256-C+AmXi30vmXg3HgG4gX5aBfrPsQiCrjSmTOvBDo+tq8=";
+  cargoHash = "sha256-pHZ0iuFyYmN0tlz5cikE+ONDPQxAowZjHMYFtKk/anU=";
 })
