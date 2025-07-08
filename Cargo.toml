@@ -1,6 +1,6 @@
 [package]
 name = "secrets-manager-rs"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
 [[bin]]
@@ -10,6 +10,7 @@ path = "src/main.rs"
 [dependencies]
 age = "0.11.1"
 anyhow = "1.0.98"
+camino = "1.1.10"
 clap = { version = "4.5.40", features = ["derive"] }
 dirs = "6.0.0"
 gethostname = "1.0.2"

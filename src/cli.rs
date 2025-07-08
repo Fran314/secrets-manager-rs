@@ -1,24 +1,34 @@
 use clap::{Parser, Subcommand};
-use thiserror::Error;
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Exports secrets to specified endpoint
     Export {
+        /// Path to the secrets directory
+        #[clap(long, short, default_value = "/secrets")]
+        source: String,
+
+        /// Path where to export the secrets
         #[clap(index = 1)]
-        endpoint: String,
+        target: String,
     },
 
     /// Verify the integrity of an existing export (already done when creating an export)
     VerifyExport {
+        /// Path to the directory containing the existing export to verify
         #[clap(index = 1)]
         source: String,
     },
 
     /// Imports secrets from existing export
     Import {
+        /// Path to the directory containing the existing export to import
         #[clap(index = 1)]
         source: String,
+
+        /// Path where to import the secrets
+        #[clap(long, short, default_value = "/secrets")]
+        target: String,
     },
 }
 
@@ -26,6 +36,7 @@ pub enum Command {
 #[derive(Debug, Parser)]
 #[clap(version)]
 struct _Args {
+    /// Specifies which profile's settings to use [default: $HOST]
     #[clap(long, short, global = true)]
     profile: Option<String>,
 
@@ -38,16 +49,7 @@ pub struct Args {
     pub command: Command,
 }
 
-#[derive(Error, Debug)]
-pub enum ArgsError {
-    #[error("path '{0}' does not exist")]
-    MissingPath(String),
-
-    #[error("path '{0}' is not a directory")]
-    PathNotDir(String),
-}
-
-pub fn args() -> Result<Args, ArgsError> {
+pub fn args() -> Args {
     let _Args { profile, command } = _Args::parse();
 
     let profile = match profile {
@@ -55,18 +57,5 @@ pub fn args() -> Result<Args, ArgsError> {
         None => gethostname::gethostname().to_string_lossy().to_string(),
     };
 
-    match &command {
-        Command::Export { endpoint: path_str }
-        | Command::VerifyExport { source: path_str }
-        | Command::Import { source: path_str } => {
-            let path = std::path::Path::new(path_str);
-            if !path.exists() {
-                return Err(ArgsError::MissingPath(path_str.clone()));
-            } else if !path.is_dir() {
-                return Err(ArgsError::PathNotDir(path_str.clone()));
-            }
-        }
-    }
-
-    Ok(Args { profile, command })
+    Args { profile, command }
 }

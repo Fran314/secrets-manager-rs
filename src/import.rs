@@ -1,206 +1,136 @@
-use std::{fs, io::Write, os::unix::fs::MetadataExt};
+use std::{
+    fs::{self, Permissions},
+    io::Write,
+    os::unix::fs::PermissionsExt,
+};
 
 use thiserror::Error;
 
-use crate::{
-    checksum,
-    config::{Config, ImportInfo},
-    crypto, safe_fs,
-};
+use camino::{Utf8Path, Utf8PathBuf};
 
-fn format_path(path: &str, profile: &str) -> std::path::PathBuf {
-    std::path::PathBuf::from(&path.replace("$profile", profile))
-}
+use crate::{checksum, config::Config, crypto, safe_fs, utf8path_ext::ExtraUtf8Path};
 
 #[derive(Error, Debug)]
 pub enum ImportFileError {
     #[error("failed to read source file at '{0}'\n{1}")]
-    ReadFail(String, std::io::Error),
-
-    #[error("failed to read source file's metadata at '{0}'\n{1}")]
-    ReadMetadataFail(String, std::io::Error),
+    ReadFail(Utf8PathBuf, std::io::Error),
 
     #[error("failed to decrypt contents of source file at '{0}'\n{1}")]
-    DecryptionFail(String, age::DecryptError),
+    DecryptionFail(Utf8PathBuf, age::DecryptError),
 
-    #[error("failed to safely write file at endpoint ('{0}')\n{1}")]
-    SafeWrite(String, safe_fs::SafeFsError),
+    #[error("file at '{0}' has ill-formed parent directory, cannot resolve")]
+    IllFormedParent(Utf8PathBuf),
+
+    #[error("failed to create directory at '{0}'\n{1}")]
+    CreateParent(Utf8PathBuf, std::io::Error),
 
     #[error("failed to assign ownership to file at endpoint ('{0}')\n{1}")]
-    ChownFail(String, std::io::Error),
+    ChownFail(Utf8PathBuf, std::io::Error),
 
     #[error("failed to assign permissions to file at endpoint ('{0}')\n{1}")]
-    ChmodFail(String, std::io::Error),
+    ChmodFail(Utf8PathBuf, std::io::Error),
+
+    #[error("failed to safely write file at endpoint ('{0}')\n{1}")]
+    SafeWrite(Utf8PathBuf, safe_fs::SafeFsError),
 
     #[error("failed to verify integrity of imported file at '{0}'\n{1}")]
-    VerifyImport(String, checksum::ChecksumError),
+    VerifyImport(Utf8PathBuf, checksum::ChecksumError),
 }
 impl ImportFileError {
-    fn read_fail(source: &std::path::Path) -> impl Fn(std::io::Error) -> Self {
-        |e| Self::ReadFail(source.to_string_lossy().to_string(), e)
+    fn read_fail(source: &Utf8PathBuf) -> impl Fn(std::io::Error) -> Self {
+        |e| Self::ReadFail(source.clone(), e)
     }
 
-    fn read_metadata_fail(source: &std::path::Path) -> impl Fn(std::io::Error) -> Self {
-        |e| Self::ReadMetadataFail(source.to_string_lossy().to_string(), e)
+    fn decryption_fail(source: &Utf8PathBuf) -> impl Fn(age::DecryptError) -> Self {
+        |e| Self::DecryptionFail(source.clone(), e)
     }
 
-    fn decryption_fail(source: &std::path::Path) -> impl Fn(age::DecryptError) -> Self {
-        |e| Self::DecryptionFail(source.to_string_lossy().to_string(), e)
+    fn create_parent(target: &Utf8PathBuf) -> impl Fn(std::io::Error) -> Self {
+        |e| Self::CreateParent(target.clone(), e)
     }
 
-    fn safe_write(endpoint: &std::path::Path) -> impl Fn(safe_fs::SafeFsError) -> Self {
-        |e| Self::SafeWrite(endpoint.to_string_lossy().to_string(), e)
+    fn chown_fail(target: &Utf8PathBuf) -> impl Fn(std::io::Error) -> Self {
+        |e| Self::ChownFail(target.clone(), e)
     }
 
-    fn chown_fail(endpoint: &std::path::Path) -> impl Fn(std::io::Error) -> Self {
-        |e| Self::ChownFail(endpoint.to_string_lossy().to_string(), e)
+    fn chmod_fail(target: &Utf8PathBuf) -> impl Fn(std::io::Error) -> Self {
+        |e| Self::ChmodFail(target.clone(), e)
     }
 
-    fn chmod_fail(endpoint: &std::path::Path) -> impl Fn(std::io::Error) -> Self {
-        |e| Self::ChmodFail(endpoint.to_string_lossy().to_string(), e)
+    fn safe_write(target: &Utf8PathBuf) -> impl Fn(safe_fs::SafeFsError) -> Self {
+        |e| Self::SafeWrite(target.clone(), e)
     }
 
-    fn verify_import(endpoint: &std::path::Path) -> impl Fn(checksum::ChecksumError) -> Self {
-        |e| Self::VerifyImport(endpoint.to_string_lossy().to_string(), e)
+    fn verify_import(target: &Utf8PathBuf) -> impl Fn(checksum::ChecksumError) -> Self {
+        |e| Self::VerifyImport(target.clone(), e)
     }
 }
-fn import_file<P, Q>(
-    filename: &str,
-    source: P,
-    endpoint: Q,
-    passphrase: &str,
-) -> Result<(), ImportFileError>
-where
-    P: AsRef<std::path::Path>,
-    Q: AsRef<std::path::Path>,
-{
-    let source = source.as_ref();
-    let endpoint = endpoint.as_ref();
-
-    let file_source = source.join(filename.to_string() + ".age");
-    let file_endpoint = endpoint.join(filename);
-
-    let sha_source = source.join(filename.to_string() + ".sha256");
-    let sha_endpoint = endpoint.join(filename.to_string() + ".sha256");
-
-    let encrypted_content =
-        fs::read(&file_source).map_err(ImportFileError::read_fail(&file_source))?;
-    let (file_perm, file_uid, file_gid) = {
-        let meta = fs::metadata(&file_source)
-            .map_err(ImportFileError::read_metadata_fail(&file_source))?;
-        (meta.permissions(), meta.uid(), meta.gid())
-    };
-    let decrypted_content = crypto::decrypt(encrypted_content, passphrase)
-        .map_err(ImportFileError::decryption_fail(&file_source))?;
-    safe_fs::safe_write(&file_endpoint, decrypted_content)
-        .map_err(ImportFileError::safe_write(&file_endpoint))?;
-    std::os::unix::fs::chown(&file_endpoint, Some(file_uid), Some(file_gid))
-        .map_err(ImportFileError::chown_fail(&file_endpoint))?;
-    std::fs::set_permissions(&file_endpoint, file_perm)
-        .map_err(ImportFileError::chmod_fail(&file_endpoint))?;
-
-    let sha_content = fs::read(&sha_source).map_err(ImportFileError::read_fail(&sha_source))?;
-    let (sha_perm, sha_uid, sha_gid) = {
-        let meta =
-            fs::metadata(&sha_source).map_err(ImportFileError::read_metadata_fail(&sha_source))?;
-        (meta.permissions(), meta.uid(), meta.gid())
-    };
-    safe_fs::safe_write(&sha_endpoint, sha_content)
-        .map_err(ImportFileError::safe_write(&sha_endpoint))?;
-    std::os::unix::fs::chown(&sha_endpoint, Some(sha_uid), Some(sha_gid))
-        .map_err(ImportFileError::chown_fail(&sha_endpoint))?;
-    std::fs::set_permissions(&sha_endpoint, sha_perm)
-        .map_err(ImportFileError::chmod_fail(&sha_endpoint))?;
-
-    checksum::verify_file_checksum(&endpoint, filename)
-        .map_err(ImportFileError::verify_import(&file_endpoint))?;
+fn chmod_chown_file(path: &Utf8PathBuf) -> Result<(), ImportFileError> {
+    std::os::unix::fs::chown(path, Some(0), Some(0)).map_err(ImportFileError::chown_fail(path))?;
+    let permissions = Permissions::from_mode(0o600);
+    std::fs::set_permissions(path, permissions).map_err(ImportFileError::chmod_fail(path))?;
 
     Ok(())
 }
+fn chmod_chown_dir(path: &Utf8PathBuf) -> Result<(), ImportFileError> {
+    std::os::unix::fs::chown(path, Some(0), Some(0)).map_err(ImportFileError::chown_fail(path))?;
+    let permissions = Permissions::from_mode(0o755);
+    std::fs::set_permissions(path, permissions).map_err(ImportFileError::chmod_fail(path))?;
 
-#[derive(Error, Debug)]
-pub enum ImportSourceError {
-    #[error("failed to import file '{0}'\n{1}")]
-    ImportFileFail(String, ImportFileError),
-
-    #[error("cannot create symlink at path '{0}' as path already exists and isn't a symlink")]
-    SymlinkIsNotSymlink(String),
-
-    #[error("cannot create symlink at path '{0}' as it already exists with wrong target")]
-    WrongSymlinkTarget(String),
-
-    #[error("failed to create symlink at path '{0}'")]
-    CreateSymlinkFail(String, std::io::Error),
+    Ok(())
 }
-impl ImportSourceError {
-    fn import_file_fail(file: String) -> impl FnOnce(ImportFileError) -> Self {
-        |e| Self::ImportFileFail(file, e)
-    }
-
-    fn create_symlink_fail(endpoint: &std::path::Path) -> impl Fn(std::io::Error) -> Self {
-        |e| Self::CreateSymlinkFail(endpoint.to_string_lossy().to_string(), e)
-    }
-}
-fn import_source<P>(
-    profile: &str,
-    source_root: P,
-    imports: &ImportInfo,
+fn import_file(
+    file_rel_path: &Utf8PathBuf,
+    source: &Utf8PathBuf,
+    target: &Utf8PathBuf,
     passphrase: &str,
-) -> Result<(), ImportSourceError>
-where
-    P: AsRef<std::path::Path>,
-{
-    let source = source_root
-        .as_ref()
-        .join(format_path(&imports.source, profile));
-    let endpoint = format_path(&imports.endpoint, profile);
+) -> Result<(), ImportFileError> {
+    let file_source = source.join(file_rel_path).add_extension("age");
+    let file_target = target.join(file_rel_path);
 
-    println!("Importing files to '{}'...", &imports.endpoint);
+    let sha_source = source.join(file_rel_path).add_extension("sha256");
+    let sha_target = target.join(file_rel_path).add_extension("sha256");
 
-    for filename in &imports.files {
-        print!("importing '{filename}'... ");
-        std::io::stdout().flush().unwrap();
-        import_file(filename, &source, &endpoint, passphrase)
-            .map_err(ImportSourceError::import_file_fail(filename.clone()))
-            .inspect_err(|_| println!("error"))?;
-        println!("ok");
-    }
+    let encrypted_content =
+        fs::read(&file_source).map_err(ImportFileError::read_fail(&file_source))?;
+    let decrypted_content = crypto::decrypt(encrypted_content, passphrase)
+        .map_err(ImportFileError::decryption_fail(&file_source))?;
 
-    if let Some(symlinks_to) = &imports.symlinks_to {
-        print!("generating symlinks... ");
-        std::io::stdout().flush().unwrap();
+    if let Some(parent) = file_rel_path.parent() {
+        let ancestors = {
+            // For some reason calling directly .rev() after .ancestors() doesn't work
+            // since the iterator size isn't know beforehand, so this workaround is
+            // needed
+            let mut ancestors = parent.ancestors().collect::<Vec<_>>().into_iter().rev();
+            let root_ancestor = ancestors.next();
+            if root_ancestor != Some(Utf8Path::new("")) {
+                return Err(ImportFileError::IllFormedParent(file_rel_path.clone()));
+            }
+            ancestors
+        };
 
-        let symlink_endpoint = format_path(symlinks_to, profile);
-
-        for file in &imports.files {
-            let symlink_source = endpoint.join(file);
-            let symlink_endpoint = symlink_endpoint.join(file);
-
-            if symlink_endpoint.exists() {
-                if !symlink_endpoint.is_symlink() {
-                    println!("error");
-                    return Err(ImportSourceError::SymlinkIsNotSymlink(
-                        symlink_endpoint.to_string_lossy().to_string(),
-                    ));
-                }
-                let link = fs::read_link(&symlink_endpoint).unwrap();
-
-                if link != symlink_source {
-                    println!("error");
-                    return Err(ImportSourceError::WrongSymlinkTarget(
-                        symlink_endpoint.to_string_lossy().to_string(),
-                    ));
-                }
-            } else {
-                std::os::unix::fs::symlink(symlink_source, &symlink_endpoint)
-                    .map_err(ImportSourceError::create_symlink_fail(&symlink_endpoint))?;
+        for ancestor in ancestors {
+            let ancestor_path = target.join(ancestor);
+            if !ancestor_path.exists() {
+                fs::create_dir(&ancestor_path)
+                    .map_err(ImportFileError::create_parent(&ancestor_path))?;
+                chmod_chown_dir(&ancestor_path)?;
             }
         }
-
-        println!("ok");
     }
 
-    println!();
+    safe_fs::safe_write(&file_target, decrypted_content)
+        .map_err(ImportFileError::safe_write(&file_target))?;
+    chmod_chown_file(&file_target)?;
+
+    let sha_content = fs::read(&sha_source).map_err(ImportFileError::read_fail(&sha_source))?;
+
+    safe_fs::safe_write(&sha_target, sha_content)
+        .map_err(ImportFileError::safe_write(&sha_target))?;
+    chmod_chown_file(&sha_target)?;
+
+    checksum::verify_file_checksum(target, file_rel_path)
+        .map_err(ImportFileError::verify_import(&file_target))?;
 
     Ok(())
 }
@@ -210,38 +140,79 @@ pub enum ImportError {
     #[error(transparent)]
     VerifySource(checksum::ChecksumError),
 
-    #[error(transparent)]
-    ImportSourceFail(ImportSourceError),
+    #[error("source path '{0}' does not exist")]
+    MissingSourcePath(Utf8PathBuf),
+    #[error("source path '{0}' is not a directory")]
+    SourceNotDir(Utf8PathBuf),
+
+    #[error("target path '{0}' does not exist")]
+    MissingTargetPath(Utf8PathBuf),
+    #[error("target path '{0}' is not a directory")]
+    TargetNotDir(Utf8PathBuf),
+
+    #[error("failed to import file '{0}'\n{1}")]
+    ImportFile(Utf8PathBuf, ImportFileError),
+}
+impl ImportError {
+    fn import_file(file: &Utf8PathBuf) -> impl FnOnce(ImportFileError) -> Self {
+        |e| Self::ImportFile(file.clone(), e)
+    }
 }
 pub fn import(
-    profile: &str,
-    source: &str,
-    config: &Config,
-    passphrase: &str,
+    profile: String,
+    source: String,
+    target: String,
+    config: Config,
+    passphrase: String,
 ) -> Result<(), ImportError> {
-    let source_root = std::path::Path::new(source);
+    let source = {
+        let path = Utf8PathBuf::from(&source);
+        if !path.exists() {
+            return Err(ImportError::MissingSourcePath(path));
+        } else if !path.is_dir() {
+            return Err(ImportError::SourceNotDir(path));
+        }
+        path
+    };
+
+    let target = {
+        let path = Utf8PathBuf::from(&target);
+        if !path.exists() {
+            return Err(ImportError::MissingTargetPath(path));
+        } else if !path.is_dir() {
+            return Err(ImportError::TargetNotDir(path));
+        }
+        path
+    };
 
     print!("Verifying source integrity... ");
     std::io::stdout().flush().unwrap();
-    checksum::verify_checksums(source_root)
+    checksum::verify_checksums(&source)
         .map_err(ImportError::VerifySource)
         .inspect_err(|_| println!("error"))?;
     println!("ok");
     println!();
 
-    if let Some(imports) = config.imports.get("shared") {
-        for import_info in imports {
-            import_source(profile, source_root, import_info, passphrase)
-                .map_err(ImportError::ImportSourceFail)?;
-        }
+    let secrets = config.secrets.get(&profile).map_or(vec![], Vec::clone);
+    let additional_imports = config
+        .additional_imports
+        .get(&profile)
+        .map_or(vec![], Vec::clone);
+
+    let files = [secrets, additional_imports].concat();
+
+    println!("Importing secrets... ");
+    for file in files {
+        print!("importing '{file}'... ");
+        std::io::stdout().flush().unwrap();
+
+        import_file(&file, &source, &target, &passphrase)
+            .map_err(ImportError::import_file(&file))
+            .inspect_err(|_| println!("error"))?;
+        println!("ok");
     }
 
-    if let Some(imports) = config.imports.get(profile) {
-        for import_info in imports {
-            import_source(profile, source_root, import_info, passphrase)
-                .map_err(ImportError::ImportSourceFail)?;
-        }
-    }
+    println!();
 
     Ok(())
 }

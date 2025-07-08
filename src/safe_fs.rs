@@ -2,41 +2,41 @@ use std::fs;
 
 use thiserror::Error;
 
+use camino::Utf8PathBuf;
+
 #[derive(Error, Debug)]
 pub enum SafeFsError {
     #[error(
         "failed to read file at '{0}' to check if the existing content matches the content meant to be written to it\n{1}"
     )]
-    ReadExisting(String, std::io::Error),
+    ReadExisting(Utf8PathBuf, std::io::Error),
 
     #[error(
         "file at '{0}' already exists and its content does not match the content meant to be written to it. Refusing to override it for safety measures"
     )]
-    ContentMismatch(String),
+    ContentMismatch(Utf8PathBuf),
 
     #[error("failed to write content to file at '{0}'\n{1}")]
-    Write(String, std::io::Error),
+    Write(Utf8PathBuf, std::io::Error),
 }
 impl SafeFsError {
-    fn read_existing(path: &std::path::Path) -> impl Fn(std::io::Error) -> Self {
-        |e| Self::ReadExisting(path.to_string_lossy().to_string(), e)
+    fn read_existing(path: &Utf8PathBuf) -> impl Fn(std::io::Error) -> Self {
+        |e| Self::ReadExisting(path.clone(), e)
     }
 
-    fn content_mismatch(path: &std::path::Path) -> Self {
-        Self::ContentMismatch(path.to_string_lossy().to_string())
+    fn content_mismatch(path: &Utf8PathBuf) -> Self {
+        Self::ContentMismatch(path.clone())
     }
 
-    fn write(path: &std::path::Path) -> impl Fn(std::io::Error) -> Self {
-        |e| Self::Write(path.to_string_lossy().to_string(), e)
+    fn write(path: &Utf8PathBuf) -> impl Fn(std::io::Error) -> Self {
+        |e| Self::Write(path.clone(), e)
     }
 }
 
-pub fn safe_write<P, C>(path: P, content: C) -> Result<(), SafeFsError>
+pub fn safe_write<C>(path: &Utf8PathBuf, content: C) -> Result<(), SafeFsError>
 where
-    P: AsRef<std::path::Path>,
     C: AsRef<[u8]>,
 {
-    let path = path.as_ref();
     let content = content.as_ref();
 
     match path.exists() {
