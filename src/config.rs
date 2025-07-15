@@ -223,17 +223,17 @@ impl LoadConfigError {
 }
 
 pub fn get_config_file() -> Result<Utf8PathBuf, LoadConfigError> {
-    let local = Utf8PathBuf::from("./secrets-manager.toml");
-    if local.exists() {
-        return Ok(local);
-    }
-
     let user = dirs::config_dir().ok_or(LoadConfigError::GetConfigDir)?;
     let user = Utf8PathBuf::from_path_buf(user)
         .map_err(|path| LoadConfigError::Utf8ConfigDir(path.to_string_lossy().to_string()))?;
     let user = user.join("secrets-manager").join("secrets-manager.toml");
     if user.exists() {
         return Ok(user);
+    }
+
+    let local = Utf8PathBuf::from("./secrets-manager.toml");
+    if local.exists() {
+        return Ok(local);
     }
 
     Err(LoadConfigError::MissingConfig)
