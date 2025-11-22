@@ -114,35 +114,47 @@ pub fn append_checksum(
     Ok(())
 }
 
-pub fn verify_file_checksum(
-    dir: &Utf8PathBuf,
-    file_rel_path: &Utf8PathBuf,
-) -> Result<(), ChecksumError> {
+pub fn verify_file_checksum(file_path: &Utf8PathBuf) -> Result<(), ChecksumError> {
     let re = regex::Regex::new(r"^([0-9a-fA-F]{64})  (.+)$").unwrap();
 
-    let file_source = dir.join(file_rel_path);
-    let sha_source = file_source.add_extension("sha256");
+    let sha_path = file_path.add_extension("sha256");
 
-    if !sha_source.exists() {
-        return Err(ChecksumError::MissingChecksum(sha_source));
+    if !sha_path.exists() {
+        return Err(ChecksumError::MissingChecksum(sha_path));
     }
 
     let sha_content =
-        fs::read_to_string(&sha_source).map_err(ChecksumError::read_checksum(&sha_source))?;
+        fs::read_to_string(&sha_path).map_err(ChecksumError::read_checksum(&sha_path))?;
     let sha_content = sha_content.trim();
 
     let caps = re
         .captures(sha_content)
-        .ok_or(ChecksumError::IllFormattedChecksum(sha_source.clone()))?;
+        .ok_or(ChecksumError::IllFormattedChecksum(sha_path.clone()))?;
     let (_, [digest, _]) = caps.extract();
 
-    let file_content = fs::read(&file_source).map_err(ChecksumError::read_source(&file_source))?;
+    let file_content = fs::read(file_path).map_err(ChecksumError::read_source(file_path))?;
 
     let actual_digest = sha256::digest(file_content);
 
     if actual_digest != digest {
-        return Err(ChecksumError::ChecksumMismatch(file_source, sha_source));
+        return Err(ChecksumError::ChecksumMismatch(file_path.clone(), sha_path));
     }
+
+    Ok(())
+}
+
+pub fn generate_file_checksum(file_path: &Utf8PathBuf) -> Result<(), ChecksumError> {
+    // TODO maybe unwrap here isn't ideal? But realistically, I am never going
+    // to call this function on a path that doesn't have a filename, so come on
+    let filename = file_path.file_name().unwrap();
+    let sha_path = file_path.add_extension("sha256");
+
+    let checksum = {
+        let digest =
+            sha256::digest(fs::read(file_path).map_err(ChecksumError::read_source(file_path))?);
+        format!("{digest}  {filename}")
+    };
+    fs::write(&sha_path, checksum + "\n").map_err(ChecksumError::write_checksum(&sha_path))?;
 
     Ok(())
 }

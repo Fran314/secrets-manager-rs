@@ -11,6 +11,10 @@ pub enum Command {
         /// Path where to export the secrets
         #[clap(index = 1)]
         target: String,
+
+        /// Create checksum files if missing [default: false]
+        #[clap(long, short)]
+        create_checksum: bool,
     },
 
     /// Verify the integrity of an existing export (already done when creating an export)

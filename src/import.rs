@@ -129,7 +129,7 @@ fn import_file(
         .map_err(ImportFileError::safe_write(&sha_target))?;
     chmod_chown_file(&sha_target)?;
 
-    checksum::verify_file_checksum(target, file_rel_path)
+    checksum::verify_file_checksum(&file_target)
         .map_err(ImportFileError::verify_import(&file_target))?;
 
     Ok(())

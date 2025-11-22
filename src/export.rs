@@ -15,6 +15,9 @@ pub enum ExportFileError {
     #[error("failed to verify integrity of source file at '{0}'\n{1}")]
     VerifySource(Utf8PathBuf, checksum::ChecksumError),
 
+    #[error("failed to generate missing checksum of source file at '{0}'\n{1}")]
+    GenerateMissingChecksum(Utf8PathBuf, checksum::ChecksumError),
+
     #[error("failed to read file at '{0}'\n{1}")]
     Read(Utf8PathBuf, std::io::Error),
 
@@ -45,6 +48,9 @@ impl ExportFileError {
     fn verify_source(source: &Utf8PathBuf) -> impl Fn(checksum::ChecksumError) -> Self {
         |e| Self::VerifySource(source.clone(), e)
     }
+    fn generate_missing_checksum(source: &Utf8PathBuf) -> impl Fn(checksum::ChecksumError) -> Self {
+        |e| Self::GenerateMissingChecksum(source.clone(), e)
+    }
     fn read(source: &Utf8PathBuf) -> impl Fn(std::io::Error) -> Self {
         |e| Self::Read(source.clone(), e)
     }
@@ -74,6 +80,7 @@ fn export_file(
     file_rel_path: &Utf8PathBuf,
     source: &Utf8PathBuf,
     target: &Utf8PathBuf,
+    create_checksum: bool,
     passphrase: &str,
 ) -> Result<(), ExportFileError> {
     let file_source = source.join(file_rel_path);
@@ -84,8 +91,11 @@ fn export_file(
     let sha_target = target.join(file_rel_path).add_extension("sha256");
     let sha_target_rel_path = file_rel_path.add_extension("sha256");
 
-    // TODO add "sha256 doesn't exist, do you want to create it?"
-    checksum::verify_file_checksum(source, file_rel_path)
+    if (!sha_source.exists()) && create_checksum {
+        checksum::generate_file_checksum(&file_source)
+            .map_err(ExportFileError::generate_missing_checksum(&file_source))?;
+    }
+    checksum::verify_file_checksum(&file_source)
         .map_err(ExportFileError::verify_source(&file_source))?;
 
     let file_content = fs::read(&file_source).map_err(ExportFileError::read(&file_source))?;
@@ -219,6 +229,7 @@ pub fn export(
     profile: String,
     source: String,
     target: String,
+    create_checksum: bool,
     config: Config,
     passphrase: String,
 ) -> Result<(), ExportError> {
@@ -250,9 +261,15 @@ pub fn export(
         print!("exporting '{file_rel_path}'... ");
         std::io::stdout().flush().unwrap();
 
-        export_file(&file_rel_path, &source, &target, &passphrase)
-            .map_err(ExportError::export_file(&file_rel_path))
-            .inspect_err(|_| println!("error"))?;
+        export_file(
+            &file_rel_path,
+            &source,
+            &target,
+            create_checksum,
+            &passphrase,
+        )
+        .map_err(ExportError::export_file(&file_rel_path))
+        .inspect_err(|_| println!("error"))?;
         println!("ok");
     }
     println!();
