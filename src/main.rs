@@ -3,8 +3,8 @@
 use anyhow::{Result, anyhow};
 
 mod checksum;
-mod config;
 mod crypto;
+mod manifest;
 
 mod cli;
 mod export;
@@ -15,8 +15,6 @@ mod verify_export;
 
 fn execute() -> Result<()> {
     let args = cli::args();
-
-    let config = config::load_config()?;
 
     match args.command {
         cli::Command::Export {
@@ -31,23 +29,20 @@ fn execute() -> Result<()> {
             }
             println!();
 
-            export::export(
-                args.profile,
-                source,
-                target,
-                create_checksum,
-                config,
-                passphrase,
-            )?;
+            export::export(source, target, create_checksum, passphrase)?;
         }
         cli::Command::VerifyExport { source } => {
             verify_export::verify_export(source)?;
         }
-        cli::Command::Import { source, target } => {
+        cli::Command::Import {
+            source,
+            target,
+            paths,
+        } => {
             let passphrase = rpassword::prompt_password("Enter passphrase: ")?;
             println!();
 
-            import::import(args.profile, source, target, config, passphrase)?;
+            import::import(source, target, paths, passphrase)?;
         }
     };
 

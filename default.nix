@@ -4,9 +4,11 @@
 
 rustPlatform.buildRustPackage (finalAttrs: {
   pname = "secrets-manager";
-  version = "0.2.1";
+  version = "0.3.0";
 
   src = ./.;
 
-  cargoHash = "sha256-TsctEKjFdAw+QOIl+MhCznk1MwaBpOboVvEWxxfedHw=";
+  cargoLock = {
+    lockFile = ./Cargo.lock;
+  };
 })

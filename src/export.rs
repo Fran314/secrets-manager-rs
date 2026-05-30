@@ -3,12 +3,10 @@ use std::{fs, io::Write};
 use camino::Utf8PathBuf;
 use thiserror::Error;
 
+use crate::checksum;
 use crate::crypto;
+use crate::manifest;
 use crate::utf8path_ext::ExtraUtf8Path;
-use crate::{
-    checksum,
-    config::{self, Config},
-};
 
 #[derive(Error, Debug)]
 pub enum ExportFileError {
@@ -145,8 +143,8 @@ pub enum ExportAdditionalError {
     #[error("failed to copy executable to export\n{0}")]
     CopyExe(std::io::Error),
 
-    #[error("failed to export config file\n{0}")]
-    SaveConfig(config::SaveConfigError),
+    #[error("failed to copy manifest to export\n{0}")]
+    CopyManifest(std::io::Error),
 
     #[error("failed to generate checksum for exported file '{0}'\n{1}")]
     GenerateChecksum(Utf8PathBuf, checksum::ChecksumError),
@@ -156,7 +154,10 @@ impl ExportAdditionalError {
         |e| Self::GenerateChecksum(file.clone(), e)
     }
 }
-fn export_additional(target: &Utf8PathBuf, config: &Config) -> Result<(), ExportAdditionalError> {
+fn export_additional(
+    source: &Utf8PathBuf,
+    target: &Utf8PathBuf,
+) -> Result<(), ExportAdditionalError> {
     println!("Exporting additional files... ");
 
     print!("exporting executable... ");
@@ -183,15 +184,16 @@ fn export_additional(target: &Utf8PathBuf, config: &Config) -> Result<(), Export
         .map_err(ExportAdditionalError::generate_checksum(&exe_target))?;
     println!("ok");
 
-    print!("exporting config... ");
+    print!("exporting manifest... ");
     std::io::stdout().flush().unwrap();
-    let config_name = Utf8PathBuf::from("secrets-manager.toml");
-    let config_target = target.join(&config_name);
-    config::save_config(&config_target, config)
-        .map_err(ExportAdditionalError::SaveConfig)
+    let manifest_name = Utf8PathBuf::from(manifest::MANIFEST_FILENAME);
+    let manifest_source = source.join(&manifest_name);
+    let manifest_target = target.join(&manifest_name);
+    fs::copy(&manifest_source, &manifest_target)
+        .map_err(ExportAdditionalError::CopyManifest)
         .inspect_err(|_| println!("error"))?;
-    checksum::append_checksum(target, &config_name)
-        .map_err(ExportAdditionalError::generate_checksum(&config_target))?;
+    checksum::append_checksum(target, &manifest_name)
+        .map_err(ExportAdditionalError::generate_checksum(&manifest_target))?;
     println!("ok");
 
     println!();
@@ -211,6 +213,12 @@ pub enum ExportError {
     #[error("target path '{0}' is not a directory")]
     TargetNotDir(Utf8PathBuf),
 
+    #[error("failed to load manifest\n{0}")]
+    LoadManifest(manifest::ManifestError),
+
+    #[error("failed to scan source directory for unlisted files\n{0}")]
+    ScanSource(std::io::Error),
+
     #[error("failed to export file '{0}'\n{1}")]
     ExportFile(Utf8PathBuf, ExportFileError),
 
@@ -225,12 +233,67 @@ impl ExportError {
         |e| Self::ExportFile(file.clone(), e)
     }
 }
+
+fn discover_files(dir: &Utf8PathBuf) -> std::io::Result<Vec<Utf8PathBuf>> {
+    fn recurse(
+        dir: &Utf8PathBuf,
+        base: &Utf8PathBuf,
+        out: &mut Vec<Utf8PathBuf>,
+    ) -> std::io::Result<()> {
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let Ok(path) = Utf8PathBuf::from_path_buf(entry.path()) else {
+                continue;
+            };
+
+            let file_type = entry.file_type()?;
+            if file_type.is_dir() {
+                recurse(&path, base, out)?;
+            } else if file_type.is_file() {
+                if let Ok(rel) = path.strip_prefix(base) {
+                    out.push(rel.to_path_buf());
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    // `&mut out` is a small optimization to avoid unnecessary `new Vec` allocations
+    let mut out = Vec::new();
+    recurse(dir, dir, &mut out)?;
+    Ok(out)
+}
+
+fn warn_unlisted_files(source: &Utf8PathBuf, secrets: &[Utf8PathBuf]) -> std::io::Result<()> {
+    let files = discover_files(source)?;
+
+    let unlisted: Vec<&Utf8PathBuf> = files
+        .iter()
+        .filter(|p| {
+            let is_sidecar = p.extension() == Some("sha256");
+            let is_manifest = p.file_name() == Some(manifest::MANIFEST_FILENAME);
+            !is_sidecar && !is_manifest && !secrets.contains(p)
+        })
+        .collect();
+
+    if !unlisted.is_empty() {
+        println!(
+            "Warning: these files under the source are not in the manifest and will not be exported:"
+        );
+        for p in &unlisted {
+            println!("  - {p}");
+        }
+        println!();
+    }
+
+    Ok(())
+}
+
 pub fn export(
-    profile: String,
     source: String,
     target: String,
     create_checksum: bool,
-    config: Config,
     passphrase: String,
 ) -> Result<(), ExportError> {
     let source = {
@@ -253,8 +316,9 @@ pub fn export(
         path
     };
 
-    // TODO maybe return error if there is nothing for this profile
-    let secrets = config.secrets.get(&profile).map_or(vec![], Vec::clone);
+    let secrets = manifest::load(&source).map_err(ExportError::LoadManifest)?;
+
+    warn_unlisted_files(&source, &secrets).map_err(ExportError::ScanSource)?;
 
     println!("Exporting secrets... ");
     for file_rel_path in secrets {
@@ -274,7 +338,7 @@ pub fn export(
     }
     println!();
 
-    export_additional(&target, &config).map_err(ExportError::ExportAdditional)?;
+    export_additional(&source, &target).map_err(ExportError::ExportAdditional)?;
 
     print!("Verifying export integrity... ");
     std::io::stdout().flush().unwrap();

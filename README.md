@@ -54,8 +54,8 @@ coreutils, `age` and a terminal.
 
 ## Usage
 
-The following commands assume the presence of a `secrets-manager.toml` in the
-current directory or in `XDG_CONFIG`.
+The following commands assume the presence of a `.secrets-manifest` at the root
+of the secrets directory, listing the secrets to back up one path per line.
 
 To export your secrets, run
 
@@ -93,14 +93,11 @@ sudo secrets-managet import .
 
 Exported files are encrypted using `age` with a passphrase. The name of the
 exported file is the original name with the additional extension `.age`.
-Ownership and permissions of the files are preserved during the export.
 
 To obtain the same behaviour, you can use the following:
 
 ```bash
 age --passphrase --output filename.txt.age --encrypt filename.txt
-chown --reference=filename.txt filename.txt.age
-chmod --reference=filename.txt filename.txt.age
 ```
 
 Note that:
@@ -125,17 +122,14 @@ in the export's root directory
 ### Import
 
 Imported files are decrypted using `age` with a passphrase. The name of the
-imported file is the exported name without the `.age` extension. Ownership and
-permissions of the files are preserved during import. Additionally, if specified
-by the config, symlinks are generated.
+imported file is the exported name without the `.age` extension. Imported files
+are set to mode `0600` and are owned by whoever runs the import.
 
 To obtain the same behaviour, you can use the following:
 
 ```bash
 age --output filename.txt --decrypt filename.txt.age
-chown --reference=filename.txt.age filename.txt
-chmod --reference=filename.txt.age filename.txt
-ln -s /path/to/target/filename.txt /path/to/link/filename.txt
+chmod 600 filename.txt
 ```
 
 Note that:

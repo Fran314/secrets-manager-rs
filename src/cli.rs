@@ -30,6 +30,10 @@ pub enum Command {
         #[clap(index = 1)]
         source: String,
 
+        /// Specific secrets to import (relative paths). If omitted, the whole export is imported
+        #[clap(index = 2)]
+        paths: Vec<String>,
+
         /// Path where to import the secrets
         #[clap(long, short, default_value = "/secrets")]
         target: String,
@@ -39,27 +43,11 @@ pub enum Command {
 /// Import and export secrets to backup
 #[derive(Debug, Parser)]
 #[clap(version)]
-struct _Args {
-    /// Specifies which profile's settings to use [default: $HOST]
-    #[clap(long, short, global = true)]
-    profile: Option<String>,
-
-    #[clap(subcommand)]
-    command: Command,
-}
-
 pub struct Args {
-    pub profile: String,
+    #[clap(subcommand)]
     pub command: Command,
 }
 
 pub fn args() -> Args {
-    let _Args { profile, command } = _Args::parse();
-
-    let profile = match profile {
-        Some(profile) => profile,
-        None => gethostname::gethostname().to_string_lossy().to_string(),
-    };
-
-    Args { profile, command }
+    Args::parse()
 }
