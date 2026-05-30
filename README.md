@@ -2,6 +2,11 @@
 
 Secrets Manager is an interoperable software to manage backups of secrets.
 
+> [!CAUTION]
+> This repository recently moved to v0.3.0 which is a **breaking change**, with
+> a reduction in scope of the project. Read the comment of the commit for
+> v0.3.0 to see the breaking changes and the motivations
+
 ## Philosophy
 
 ### The theory
