@@ -1,6 +1,6 @@
 [package]
 name = "secs-man"
-version = "0.3.1"
+version = "0.3.0-dev"
 edition = "2024"
 
 [[bin]]
