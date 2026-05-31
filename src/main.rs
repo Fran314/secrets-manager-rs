@@ -5,6 +5,7 @@ use anyhow::{Result, anyhow};
 mod checksum;
 mod crypto;
 mod manifest;
+mod snapshot;
 
 mod cli;
 mod export;

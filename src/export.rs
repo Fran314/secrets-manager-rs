@@ -6,6 +6,7 @@ use thiserror::Error;
 use crate::checksum;
 use crate::crypto;
 use crate::manifest;
+use crate::snapshot;
 use crate::utf8path_ext::ExtraUtf8Path;
 
 #[derive(Error, Debug)]
@@ -219,6 +220,18 @@ pub enum ExportError {
     #[error("failed to scan source directory for unlisted files\n{0}")]
     ScanSource(std::io::Error),
 
+    #[error("failed to remove stale partial snapshots in container '{0}'\n{1}")]
+    RemoveStalePartials(Utf8PathBuf, std::io::Error),
+
+    #[error("failed to create partial snapshot directory '{0}'\n{1}")]
+    CreatePartial(Utf8PathBuf, std::io::Error),
+
+    #[error("a snapshot named '{0}' already exists, rerun the export to get a fresh timestamp")]
+    SnapshotExists(Utf8PathBuf),
+
+    #[error("failed to finalize snapshot at '{0}'\n{1}")]
+    Finalize(Utf8PathBuf, std::io::Error),
+
     #[error("failed to export file '{0}'\n{1}")]
     ExportFile(Utf8PathBuf, ExportFileError),
 
@@ -231,6 +244,18 @@ pub enum ExportError {
 impl ExportError {
     fn export_file(file: &Utf8PathBuf) -> impl FnOnce(ExportFileError) -> Self {
         |e| Self::ExportFile(file.clone(), e)
+    }
+
+    fn remove_stale_partials(container: &Utf8PathBuf) -> impl Fn(std::io::Error) -> Self {
+        |e| Self::RemoveStalePartials(container.clone(), e)
+    }
+
+    fn create_partial(partial: &Utf8PathBuf) -> impl Fn(std::io::Error) -> Self {
+        |e| Self::CreatePartial(partial.clone(), e)
+    }
+
+    fn finalize(target: &Utf8PathBuf) -> impl Fn(std::io::Error) -> Self {
+        |e| Self::Finalize(target.clone(), e)
     }
 }
 
@@ -290,6 +315,79 @@ fn warn_unlisted_files(source: &Utf8PathBuf, secrets: &[Utf8PathBuf]) -> std::io
     Ok(())
 }
 
+fn remove_stale_partials(container: &Utf8PathBuf) -> std::io::Result<()> {
+    for entry in fs::read_dir(container)? {
+        let entry = entry?;
+        let Ok(path) = Utf8PathBuf::from_path_buf(entry.path()) else {
+            continue;
+        };
+        if path.file_name().is_some_and(snapshot::is_partial) {
+            fs::remove_dir_all(&path)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn write_contents(
+    source: &Utf8PathBuf,
+    dir: &Utf8PathBuf,
+    secrets: &[Utf8PathBuf],
+    create_checksum: bool,
+    passphrase: &str,
+) -> Result<(), ExportError> {
+    println!("Exporting secrets... ");
+    for file_rel_path in secrets {
+        print!("exporting '{file_rel_path}'... ");
+        std::io::stdout().flush().unwrap();
+
+        export_file(file_rel_path, source, dir, create_checksum, passphrase)
+            .map_err(ExportError::export_file(file_rel_path))
+            .inspect_err(|_| println!("error"))?;
+        println!("ok");
+    }
+    println!();
+
+    export_additional(source, dir).map_err(ExportError::ExportAdditional)?;
+
+    print!("Verifying export integrity... ");
+    std::io::stdout().flush().unwrap();
+    checksum::verify_checksums(dir)
+        .map_err(ExportError::VerifyExport)
+        .inspect_err(|_| println!("error"))?;
+    println!("ok");
+    println!();
+
+    Ok(())
+}
+
+fn build_snapshot(
+    source: &Utf8PathBuf,
+    container: &Utf8PathBuf,
+    name: &str,
+    secrets: &[Utf8PathBuf],
+    create_checksum: bool,
+    passphrase: &str,
+) -> Result<(), ExportError> {
+    let partial_dir = container.join(snapshot::to_partial(name));
+    let export_dir = container.join(name);
+
+    if export_dir.exists() {
+        return Err(ExportError::SnapshotExists(export_dir));
+    }
+
+    fs::create_dir(&partial_dir).map_err(ExportError::create_partial(&partial_dir))?;
+
+    if let Err(e) = write_contents(source, &partial_dir, secrets, create_checksum, passphrase) {
+        let _ = fs::remove_dir_all(&partial_dir);
+        return Err(e);
+    }
+
+    fs::rename(&partial_dir, &export_dir).map_err(ExportError::finalize(&export_dir))?;
+
+    Ok(())
+}
+
 pub fn export(
     source: String,
     target: String,
@@ -320,35 +418,13 @@ pub fn export(
 
     warn_unlisted_files(&source, &secrets).map_err(ExportError::ScanSource)?;
 
-    println!("Exporting secrets... ");
-    for file_rel_path in secrets {
-        print!("exporting '{file_rel_path}'... ");
-        std::io::stdout().flush().unwrap();
+    remove_stale_partials(&target).map_err(ExportError::remove_stale_partials(&target))?;
 
-        export_file(
-            &file_rel_path,
-            &source,
-            &target,
-            create_checksum,
-            &passphrase,
-        )
-        .map_err(ExportError::export_file(&file_rel_path))
-        .inspect_err(|_| println!("error"))?;
-        println!("ok");
-    }
-    println!();
-
-    export_additional(&source, &target).map_err(ExportError::ExportAdditional)?;
-
-    print!("Verifying export integrity... ");
-    std::io::stdout().flush().unwrap();
-    checksum::verify_checksums(&target)
-        .map_err(ExportError::VerifyExport)
-        .inspect_err(|_| println!("error"))?;
-    println!("ok");
-    println!();
+    let name = snapshot::new_export();
+    build_snapshot(&source, &target, &name, &secrets, create_checksum, &passphrase)?;
 
     println!("Export completed succesfully!");
+    println!("Snapshot: {name}");
 
     Ok(())
 }
