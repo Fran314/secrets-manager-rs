@@ -1095,8 +1095,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "secrets-manager-rs"
-version = "0.3.0"
+name = "secs-man"
+version = "0.3.1"
 dependencies = [
  "age",
  "anyhow",

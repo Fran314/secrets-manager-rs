@@ -3,8 +3,8 @@
 }:
 
 rustPlatform.buildRustPackage (finalAttrs: {
-  pname = "secrets-manager";
-  version = "0.3.0";
+  pname = "secs-man";
+  version = "0.3.1";
 
   src = ./.;
 

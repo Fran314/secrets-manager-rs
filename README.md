@@ -1,6 +1,6 @@
-# Secrets Manager
+# secs-man
 
-Secrets Manager is an interoperable software to manage backups of secrets.
+secs-man is an interoperable software to manage backups of secrets.
 
 > [!CAUTION]
 > This repository recently moved to v0.3.0 which is a **breaking change**, with
@@ -24,7 +24,7 @@ to decrypt it without software X.
 
 This is the meaning of "interoperable" in the description: if you encrypt your
 secrets with this software, you should be able to decrypt and restore them
-without this software. Even if `secrets-manager` disappears from the face of the
+without this software. Even if `secs-man` disappears from the face of the
 Earth, your data is still accessible.
 
 ### The practice
@@ -37,7 +37,7 @@ What you do in practice is make sure to be dependant only on technologies that
 are "standards" or close to. I'm ok with being dependant on the existance of
 bash interpreters, usb ports and linux machines.
 
-The true goal of secrets-manager then becomes being perfectly reproducible only
+The true goal of secs-man then becomes being perfectly reproducible only
 with:
 
 - a terminal
@@ -65,17 +65,17 @@ of the secrets directory, listing the secrets to back up one path per line.
 To export your secrets, run
 
 ```bash
-sudo secrets-manager export /path/to/export/endpoint
+sudo secs-man export /path/to/export/endpoint
 ```
 
 To verify the integrity of an existing export (see note below), run
 
 ```bash
 # if you're using the exported binary
-sudo secrets-manager verify-export .
+sudo secs-man verify-export .
 
 # if you're using the installed binary
-# sudo secrets-managet verify-export /path/to/export/source
+# sudo secs-man verify-export /path/to/export/source
 ```
 
 > note that an integrity check is automatically done at every export. This is
@@ -86,10 +86,10 @@ To import your secrets, run
 
 ```bash
 # if you're using the exported binary
-sudo secrets-managet import .
+sudo secs-man import .
 
 # if you're using the installed binary
-# sudo secrets-managet import /path/to/export/source
+# sudo secs-man import /path/to/export/source
 ```
 
 ## Interoperability

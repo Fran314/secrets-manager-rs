@@ -1,5 +1,5 @@
 {
-  description = "Secrets Manager";
+  description = "secs-man";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
