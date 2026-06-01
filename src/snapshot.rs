@@ -1,4 +1,10 @@
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::{fs, io};
+
+use camino::Utf8PathBuf;
+use regex::Regex;
+
+use crate::manifest;
 
 const PARTIAL_PREFIX: &str = ".partial-";
 
@@ -47,4 +53,50 @@ pub fn to_partial(name: &str) -> String {
 
 pub fn is_partial(name: &str) -> bool {
     name.starts_with(PARTIAL_PREFIX)
+}
+
+fn is_snapshot_name(name: &str) -> bool {
+    let re = Regex::new(r"^export-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}Z$").unwrap();
+    re.is_match(name)
+}
+
+pub enum SourceKind {
+    Snapshot,
+    Container,
+    Neither,
+}
+
+pub fn classify(path: &Utf8PathBuf) -> SourceKind {
+    if path.join(manifest::MANIFEST_FILENAME).exists() {
+        SourceKind::Snapshot
+    } else if list_snapshots(path).is_ok_and(|snapshots| !snapshots.is_empty()) {
+        SourceKind::Container
+    } else {
+        SourceKind::Neither
+    }
+}
+
+pub fn list_snapshots(container: &Utf8PathBuf) -> io::Result<Vec<Utf8PathBuf>> {
+    let mut snapshots = Vec::new();
+    for entry in fs::read_dir(container)? {
+        let entry = entry?;
+        let Ok(path) = Utf8PathBuf::from_path_buf(entry.path()) else {
+            continue;
+        };
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let Some(name) = path.file_name() else {
+            continue;
+        };
+        if is_snapshot_name(name) && path.join(manifest::MANIFEST_FILENAME).exists() {
+            snapshots.push(Utf8PathBuf::from(name));
+        }
+    }
+
+    Ok(snapshots)
+}
+
+pub fn newest(container: &Utf8PathBuf) -> io::Result<Option<Utf8PathBuf>> {
+    Ok(list_snapshots(container)?.into_iter().max())
 }

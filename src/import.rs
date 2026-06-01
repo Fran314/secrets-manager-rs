@@ -8,7 +8,7 @@ use thiserror::Error;
 
 use camino::{Utf8Path, Utf8PathBuf};
 
-use crate::{checksum, crypto, manifest, safe_fs, utf8path_ext::ExtraUtf8Path};
+use crate::{checksum, crypto, manifest, safe_fs, snapshot, utf8path_ext::ExtraUtf8Path};
 
 #[derive(Error, Debug)]
 pub enum ImportFileError {
@@ -171,6 +171,15 @@ pub enum ImportError {
     #[error("source path '{0}' is not a directory")]
     SourceNotDir(Utf8PathBuf),
 
+    #[error("failed to list snapshots in container '{0}'\n{1}")]
+    ListSnapshots(Utf8PathBuf, std::io::Error),
+
+    #[error("container '{0}' holds no snapshots to import")]
+    EmptyContainer(Utf8PathBuf),
+
+    #[error("source '{0}' is neither a snapshot nor a container of snapshots")]
+    NotSnapshotOrContainer(Utf8PathBuf),
+
     #[error("target path '{0}' does not exist")]
     MissingTargetPath(Utf8PathBuf),
     #[error("target path '{0}' is not a directory")]
@@ -188,6 +197,10 @@ pub enum ImportError {
 impl ImportError {
     fn import_file(file: &Utf8PathBuf) -> impl FnOnce(ImportFileError) -> Self {
         |e| Self::ImportFile(file.clone(), e)
+    }
+
+    fn list_snapshots(container: &Utf8PathBuf) -> impl Fn(std::io::Error) -> Self {
+        |e| Self::ListSnapshots(container.clone(), e)
     }
 }
 pub fn import(
@@ -214,6 +227,21 @@ pub fn import(
             return Err(ImportError::TargetNotDir(path));
         }
         path
+    };
+
+    let source = match snapshot::classify(&source) {
+        snapshot::SourceKind::Snapshot => source,
+        snapshot::SourceKind::Container => {
+            match snapshot::newest(&source).map_err(ImportError::list_snapshots(&source))? {
+                Some(name) => {
+                    println!("Using snapshot {name}");
+                    println!();
+                    source.join(name)
+                }
+                None => return Err(ImportError::EmptyContainer(source)),
+            }
+        }
+        snapshot::SourceKind::Neither => return Err(ImportError::NotSnapshotOrContainer(source)),
     };
 
     print!("Verifying source integrity... ");

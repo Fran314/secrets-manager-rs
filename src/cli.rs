@@ -26,7 +26,7 @@ pub enum Command {
 
     /// Imports secrets from existing export
     Import {
-        /// Path to the directory containing the existing export to import
+        /// Path to the directory containing the existing export (to import the latest export), or a specific snapshot inside it
         #[clap(index = 1)]
         source: String,
 
