@@ -19,7 +19,7 @@ pub enum Command {
 
     /// Verify the integrity of an existing export (already done when creating an export)
     VerifyExport {
-        /// Path to the directory containing the existing export to verify
+        /// Path to the directory containing the existing export (to verify every snapshot), or a specific snapshot inside it
         #[clap(index = 1)]
         source: String,
     },
