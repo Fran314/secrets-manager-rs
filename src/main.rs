@@ -3,6 +3,7 @@
 use anyhow::{Result, anyhow};
 
 mod checksum;
+mod chown_spec;
 mod crypto;
 mod manifest;
 mod snapshot;

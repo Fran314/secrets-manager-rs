@@ -68,8 +68,10 @@ import.
 
 At the root of the secrets directory there should be a `.secrets-manifest`
 plaintext file containing the list of secrets to be managed, in the form of
-paths relative to the secrets directory. You can find an example of
-`.secrets-manifest` [here](./.secrets-manifest.example).
+paths relative to the secrets directory. Filepaths cannot contain whitespaces.
+Each entry can also specify an `owner` and a `mode` which will be used to set
+the correct permissions during import. See
+[`.secrets-manifest.example`](./.secrets-manifest.example) for the syntax.
 
 During an export, the files listed in the manifest get encrypted through `age`
 with a specified passphrase. The integrity of the files is guaranteed by a
@@ -80,6 +82,10 @@ directory.
 The files can then be decrypted and imported either by pointing to the export
 target directory (to import the latest snapshot) or to a specific snapshot
 inside this directory.
+
+The following commands can be run without `sudo`, however they will fail if the
+manifest specifies any owner different than the user executing the command (as
+the inner chown call will fail).
 
 To export your secrets, run
 
@@ -127,8 +133,8 @@ age --passphrase --output filename.txt.age --encrypt filename.txt
 Note that:
 
 - before exporting, the checksum of the source file is checked
-- during the export, the existing checksum of the plaintext file is encrypted
-  and exported
+- during the export, the existing checksum of the plaintext file is exported
+  next to the encrypted file
 - after the export, another checksum is created for all the encrypted files to
   enable to check the integrity of the export on a later moment.
 
@@ -146,14 +152,21 @@ in the exported snapshot directory
 ### Import
 
 Imported files are decrypted using `age` with a passphrase. The name of the
-imported file is the exported name without the `.age` extension. Imported files
-are set to mode `0600` and are owned by whoever runs the import.
+imported file is the exported name without the `.age` extension. If `owner`
+and/or `mode` are specified in the manifest for a given entry, the imported file
+is set to the specified owner and mode. If no mode is specified, it defaults to
+`600`.
 
 To obtain the same behaviour, you can use the following:
 
 ```bash
 age --output filename.txt --decrypt filename.txt.age
-chmod 600 filename.txt
+
+# if no mode is specified, it defaults to 600
+chmod <mode> filename.txt
+
+# if no owner is specified, skip this step
+chown <owner> filename.txt
 ```
 
 Note that:

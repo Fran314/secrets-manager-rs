@@ -289,7 +289,7 @@ fn discover_files(dir: &Utf8PathBuf) -> std::io::Result<Vec<Utf8PathBuf>> {
     Ok(out)
 }
 
-fn warn_unlisted_files(source: &Utf8PathBuf, secrets: &[Utf8PathBuf]) -> std::io::Result<()> {
+fn warn_unlisted_files(source: &Utf8PathBuf, secrets: &[manifest::Secret]) -> std::io::Result<()> {
     let files = discover_files(source)?;
 
     let unlisted: Vec<&Utf8PathBuf> = files
@@ -297,7 +297,7 @@ fn warn_unlisted_files(source: &Utf8PathBuf, secrets: &[Utf8PathBuf]) -> std::io
         .filter(|p| {
             let is_sidecar = p.extension() == Some("sha256");
             let is_manifest = p.file_name() == Some(manifest::MANIFEST_FILENAME);
-            !is_sidecar && !is_manifest && !secrets.contains(p)
+            !is_sidecar && !is_manifest && !secrets.iter().any(|s| &s.path == *p)
         })
         .collect();
 
@@ -331,11 +331,12 @@ fn remove_stale_partials(container: &Utf8PathBuf) -> std::io::Result<()> {
 fn write_contents(
     source: &Utf8PathBuf,
     dir: &Utf8PathBuf,
-    secrets: &[Utf8PathBuf],
+    secrets: &[manifest::Secret],
     passphrase: &str,
 ) -> Result<(), ExportError> {
     println!("Exporting secrets... ");
-    for file_rel_path in secrets {
+    for secret in secrets {
+        let file_rel_path = &secret.path;
         print!("exporting '{file_rel_path}'... ");
         std::io::stdout().flush().unwrap();
 
@@ -363,7 +364,7 @@ fn build_snapshot(
     source: &Utf8PathBuf,
     container: &Utf8PathBuf,
     name: &str,
-    secrets: &[Utf8PathBuf],
+    secrets: &[manifest::Secret],
     passphrase: &str,
 ) -> Result<(), ExportError> {
     let partial_dir = container.join(snapshot::to_partial(name));

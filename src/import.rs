@@ -8,7 +8,10 @@ use thiserror::Error;
 
 use camino::{Utf8Path, Utf8PathBuf};
 
-use crate::{checksum, crypto, manifest, safe_fs, snapshot, utf8path_ext::ExtraUtf8Path};
+use crate::{
+    checksum, chown_spec::ChownSpec, crypto, manifest, safe_fs, snapshot,
+    utf8path_ext::ExtraUtf8Path,
+};
 
 #[derive(Error, Debug)]
 pub enum ImportFileError {
@@ -32,6 +35,12 @@ pub enum ImportFileError {
 
     #[error("failed to verify integrity of imported file at '{0}'\n{1}")]
     VerifyImport(Utf8PathBuf, checksum::ChecksumError),
+
+    #[error("failed to run chown for '{0}'\n{1}")]
+    ChownSpawn(Utf8PathBuf, std::io::Error),
+
+    #[error("failed to set owner '{1}' on '{0}'\n{2}")]
+    ChownFail(Utf8PathBuf, String, String),
 }
 impl ImportFileError {
     fn read_fail(source: &Utf8PathBuf) -> impl Fn(std::io::Error) -> Self {
@@ -57,9 +66,13 @@ impl ImportFileError {
     fn verify_import(target: &Utf8PathBuf) -> impl Fn(checksum::ChecksumError) -> Self {
         |e| Self::VerifyImport(target.clone(), e)
     }
+
+    fn chown_spawn(target: &Utf8PathBuf) -> impl Fn(std::io::Error) -> Self {
+        |e| Self::ChownSpawn(target.clone(), e)
+    }
 }
-fn chmod_file(path: &Utf8PathBuf) -> Result<(), ImportFileError> {
-    let permissions = Permissions::from_mode(0o600);
+fn chmod_file(path: &Utf8PathBuf, mode: u32) -> Result<(), ImportFileError> {
+    let permissions = Permissions::from_mode(mode);
     std::fs::set_permissions(path, permissions).map_err(ImportFileError::chmod_fail(path))?;
 
     Ok(())
@@ -70,12 +83,32 @@ fn chmod_dir(path: &Utf8PathBuf) -> Result<(), ImportFileError> {
 
     Ok(())
 }
+fn chown(path: &Utf8PathBuf, spec: &ChownSpec) -> Result<(), ImportFileError> {
+    let output = std::process::Command::new("chown")
+        .arg("--")
+        .arg(spec.as_str())
+        .arg(path)
+        .output()
+        .map_err(ImportFileError::chown_spawn(path))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(ImportFileError::ChownFail(
+            path.clone(),
+            spec.as_str().to_string(),
+            stderr,
+        ));
+    }
+
+    Ok(())
+}
 fn import_file(
-    file_rel_path: &Utf8PathBuf,
+    secret: &manifest::Secret,
     source: &Utf8PathBuf,
     target: &Utf8PathBuf,
     passphrase: &str,
 ) -> Result<(), ImportFileError> {
+    let file_rel_path = &secret.path;
     let file_source = source.join(file_rel_path).add_extension("age");
     let file_target = target.join(file_rel_path);
 
@@ -112,13 +145,19 @@ fn import_file(
 
     safe_fs::safe_write(&file_target, decrypted_content)
         .map_err(ImportFileError::safe_write(&file_target))?;
-    chmod_file(&file_target)?;
+    chmod_file(&file_target, secret.mode)?;
+    if let Some(owner) = &secret.owner {
+        chown(&file_target, owner)?;
+    }
 
     let sha_content = fs::read(&sha_source).map_err(ImportFileError::read_fail(&sha_source))?;
 
     safe_fs::safe_write(&sha_target, sha_content)
         .map_err(ImportFileError::safe_write(&sha_target))?;
-    chmod_file(&sha_target)?;
+    chmod_file(&sha_target, 0o600)?;
+    if let Some(owner) = &secret.owner {
+        chown(&sha_target, owner)?;
+    }
 
     checksum::verify_file_checksum(&file_target)
         .map_err(ImportFileError::verify_import(&file_target))?;
@@ -137,7 +176,7 @@ fn restore_manifest(
     let content = fs::read(&manifest_source).map_err(ImportFileError::read_fail(&manifest_source))?;
     safe_fs::safe_write(&manifest_target, content)
         .map_err(ImportFileError::safe_write(&manifest_target))?;
-    chmod_file(&manifest_target)?;
+    chmod_file(&manifest_target, 0o600)?;
 
     Ok(())
 }
@@ -255,16 +294,16 @@ pub fn import(
     let available = manifest::load(&source).map_err(ImportError::LoadManifest)?;
 
     let is_full = paths.is_empty();
-    let secrets = if is_full {
+    let secrets: Vec<manifest::Secret> = if is_full {
         available
     } else {
         let mut selected = Vec::new();
         for path in &paths {
             let path = Utf8PathBuf::from(path);
-            if !available.contains(&path) {
-                return Err(ImportError::PathNotInExport(path));
+            match available.iter().find(|s| s.path == path) {
+                Some(secret) => selected.push(secret.clone()),
+                None => return Err(ImportError::PathNotInExport(path)),
             }
-            selected.push(path);
         }
         selected
     };
@@ -274,10 +313,16 @@ pub fn import(
         let local = manifest::load(&target).map_err(ImportError::LoadLocalManifest)?;
 
         if is_full {
-            let only_backup: Vec<&Utf8PathBuf> =
-                secrets.iter().filter(|p| !local.contains(p)).collect();
-            let only_local: Vec<&Utf8PathBuf> =
-                local.iter().filter(|p| !secrets.contains(p)).collect();
+            let only_backup: Vec<&Utf8PathBuf> = secrets
+                .iter()
+                .map(|s| &s.path)
+                .filter(|p| !local.iter().any(|l| &l.path == *p))
+                .collect();
+            let only_local: Vec<&Utf8PathBuf> = local
+                .iter()
+                .map(|s| &s.path)
+                .filter(|p| !secrets.iter().any(|s| &s.path == *p))
+                .collect();
 
             if !only_backup.is_empty() || !only_local.is_empty() {
                 println!("The export manifest differs from the local manifest at the target:");
@@ -304,8 +349,11 @@ pub fn import(
                 println!();
             }
         } else {
-            let unlisted: Vec<&Utf8PathBuf> =
-                secrets.iter().filter(|p| !local.contains(p)).collect();
+            let unlisted: Vec<&Utf8PathBuf> = secrets
+                .iter()
+                .map(|s| &s.path)
+                .filter(|p| !local.iter().any(|l| &l.path == *p))
+                .collect();
             if !unlisted.is_empty() {
                 println!("Note: the following specified secrets are not present in the local manifest (they will be restored anyway):");
                 for p in &unlisted {
@@ -317,11 +365,12 @@ pub fn import(
     }
 
     println!("Importing secrets... ");
-    for file in &secrets {
+    for secret in &secrets {
+        let file = &secret.path;
         print!("importing '{file}'... ");
         std::io::stdout().flush().unwrap();
 
-        import_file(file, &source, &target, &passphrase)
+        import_file(secret, &source, &target, &passphrase)
             .map_err(ImportError::import_file(file))
             .inspect_err(|_| println!("error"))?;
         println!("ok");
