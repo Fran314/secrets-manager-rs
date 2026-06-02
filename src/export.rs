@@ -421,9 +421,16 @@ pub fn export(
     remove_stale_partials(&target).map_err(ExportError::remove_stale_partials(&target))?;
 
     let name = snapshot::new_export();
-    build_snapshot(&source, &target, &name, &secrets, create_checksum, &passphrase)?;
+    build_snapshot(
+        &source,
+        &target,
+        &name,
+        &secrets,
+        create_checksum,
+        &passphrase,
+    )?;
 
-    println!("Export completed succesfully!");
+    println!("Export completed successfully!");
     println!("Snapshot: {name}");
 
     Ok(())

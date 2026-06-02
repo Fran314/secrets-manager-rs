@@ -8,7 +8,7 @@ pub enum Command {
         #[clap(long, short, default_value = "/secrets")]
         source: String,
 
-        /// Path where to export the secrets
+        /// Path where to export the secrets (a new timestamped snapshot is created inside it)
         #[clap(index = 1)]
         target: String,
 

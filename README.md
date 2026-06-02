@@ -1,10 +1,10 @@
 # secs-man
 
-secs-man is an interoperable software to manage backups of secrets.
+secs-man is an interoperable secrets manager to manage backups of secrets.
 
 > [!CAUTION]
-> This repository recently moved to v0.3.0 which is a **breaking change**, with
-> a reduction in scope of the project. Read the comment of the commit for
+> This repository recently moved to v0.3.0-dev which is a **breaking change**,
+> with a reduction in scope of the project. Read the comment of the commit for
 > v0.3.0 to see the breaking changes and the motivations
 
 ## Philosophy
@@ -18,27 +18,27 @@ Any software that forces you to remain in its ecosystem after use (such as: "if
 you encrypt it with this software, you can only decrypt it with this software")
 makes you dependant on it.
 
-Hence, the encryption, decryption and restore of you important data should
+Hence, the encryption, decryption and restore of your important data should be
 decoupled, that is if you encrypted it with software X, you should still be able
 to decrypt it without software X.
 
 This is the meaning of "interoperable" in the description: if you encrypt your
 secrets with this software, you should be able to decrypt and restore them
-without this software. Even if `secs-man` disappears from the face of the
-Earth, your data is still accessible.
+without this software. Even if `secs-man` disappears from the face of the Earth,
+your data is still accessible.
 
 ### The practice
 
-In practice, you cannot create a setup where you secrets are 100% safe from data
-loss. Even if your software X is interoperable with Y, Z and W, you'll still
-lose access to your data if X, Y, Z and W all stopped working at the same time.
+In practice, you cannot create a setup where your secrets are 100% safe from
+data loss. Even if your software X is interoperable with Y, Z and W, you'll
+still lose access to your data if X, Y, Z and W all stopped working at the same
+time.
 
 What you do in practice is make sure to be dependant only on technologies that
-are "standards" or close to. I'm ok with being dependant on the existance of
+are "standards" or close to. I'm ok with being dependant on the existence of
 bash interpreters, usb ports and linux machines.
 
-The true goal of secs-man then becomes being perfectly reproducible only
-with:
+The true goal of secs-man then becomes being perfectly reproducible only with:
 
 - a terminal
 - coreutils such as `cp`, `mv` and `sha256sum`
@@ -59,8 +59,27 @@ coreutils, `age` and a terminal.
 
 ## Usage
 
-The following commands assume the presence of a `.secrets-manifest` at the root
-of the secrets directory, listing the secrets to back up one path per line.
+This tool allows to export and encrypt files from a given source directory, and
+to recover them by importing to the same directory. The recommended way to use
+this tool is to have all your "secrets" (keys, files, ...) in a centralized
+directory. By default, the directory `/secrets` is used. This can be changed
+with the `--source` flag during export and with the `--target` flag during
+import.
+
+At the root of the secrets directory there should be a `.secrets-manifest`
+plaintext file containing the list of secrets to be managed, in the form of
+paths relative to the secrets directory. You can find an example of
+`.secrets-manifest` [here](./.secrets-manifest.example).
+
+During an export, the files listed in the manifest get encrypted through `age`
+with a specified passphrase. The integrity of the files is guaranteed by a
+companion `*.sha256` file, which gets automatically generated if missing. The
+encrypted files get exported to a timestamped snapshot inside the export target
+directory.
+
+The files can then be decrypted and imported either by pointing to the export
+target directory (to import the latest snapshot) or to a specific snapshot
+inside this directory.
 
 To export your secrets, run
 
@@ -71,11 +90,11 @@ sudo secs-man export /path/to/export/endpoint
 To verify the integrity of an existing export (see note below), run
 
 ```bash
-# if you're using the exported binary
-sudo secs-man verify-export .
+# to verify the integrity of all the exported snapshots
+sudo secs-man verify-export /path/to/export/endpoint
 
-# if you're using the installed binary
-# sudo secs-man verify-export /path/to/export/source
+# to verify the integrity of a specific snapshot
+sudo secs-man verify-export /path/to/export/endpoint/export-YYYY-MM-DD_HH-MM-SSZ
 ```
 
 > note that an integrity check is automatically done at every export. This is
@@ -85,11 +104,11 @@ sudo secs-man verify-export .
 To import your secrets, run
 
 ```bash
-# if you're using the exported binary
-sudo secs-man import .
+# to import the latest snapshot
+sudo secs-man import /path/to/export/endpoint
 
-# if you're using the installed binary
-# sudo secs-man import /path/to/export/source
+# to import a specific snapshot
+sudo secs-man import /path/to/export/endpoint/export-YYYY-MM-DD_HH-MM-SSZ
 ```
 
 ## Interoperability
@@ -115,14 +134,14 @@ Note that:
 
 ### Verify Export
 
-Veryfying the integrity of an export consist in checking that every checksum
+Verifying the integrity of an export consists in checking that every checksum
 matches. To do so one can simply run
 
 ```bash
 find . -name "sha256sums.txt" -execdir sha256sum -c sha256sums.txt \;
 ```
 
-in the export's root directory
+in the exported snapshot directory
 
 ### Import
 
@@ -140,4 +159,24 @@ chmod 600 filename.txt
 Note that:
 
 - before the import, the checksum of the source file is checked
-- after the export, the checksum of the imported files is checked
+- after the import, the checksum of the imported files is checked
+
+## Threat model
+
+This tool automatically creates snapshots during export which **do not** get
+cleaned up by the tool itself. This means that some care should be used when
+exporting secrets with this tool.
+
+When exporting "authenticating" secrets (SSH/WireGuard keys, tokens), which can
+easily be rotated, the existence of the snapshot doesn't pose any additional
+risk.
+
+When exporting "decrypting" secrets (disk keys, age/PGP identities,
+password-manager master key), however, the existence of the snapshots means
+that, if the secrets inside the exports were to be leaked and somehow decrypted,
+an attacker could have access to current **and past** decryption keys. For this
+reason, when rotating "decrypting" secrets, it would be safe to also delete old
+exported snapshots (which can be easily done with
+`rm -r /path/to/export/endpoint/export-YYYY-MM-DD_HH-MM-SSZ`). Note that the
+critical path which exposes old decryption keys also implies the knowledge of
+the current secrets, which is probably a bigger concern.

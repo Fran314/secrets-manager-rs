@@ -42,14 +42,14 @@ fn verify_snapshot(snapshot: &Utf8PathBuf) -> Result<(), VerifyExportError> {
         .inspect_err(|_| println!("error"))?;
     println!("ok");
     println!();
-    println!("Export integrity verified succesfully!");
+    println!("Export integrity verified successfully!");
 
     Ok(())
 }
 
 fn verify_container(container: &Utf8PathBuf) -> Result<(), VerifyExportError> {
-    let mut snapshots =
-        snapshot::list_snapshots(container).map_err(VerifyExportError::list_snapshots(container))?;
+    let mut snapshots = snapshot::list_snapshots(container)
+        .map_err(VerifyExportError::list_snapshots(container))?;
     if snapshots.is_empty() {
         return Err(VerifyExportError::EmptyContainer(container.clone()));
     }
@@ -75,7 +75,7 @@ fn verify_container(container: &Utf8PathBuf) -> Result<(), VerifyExportError> {
         return Err(VerifyExportError::SnapshotsFailed { failed, total });
     }
 
-    println!("All {total} snapshots verified succesfully!");
+    println!("All {total} snapshots verified successfully!");
 
     Ok(())
 }
