@@ -79,7 +79,6 @@ fn export_file(
     file_rel_path: &Utf8PathBuf,
     source: &Utf8PathBuf,
     target: &Utf8PathBuf,
-    create_checksum: bool,
     passphrase: &str,
 ) -> Result<(), ExportFileError> {
     let file_source = source.join(file_rel_path);
@@ -90,7 +89,7 @@ fn export_file(
     let sha_target = target.join(file_rel_path).add_extension("sha256");
     let sha_target_rel_path = file_rel_path.add_extension("sha256");
 
-    if (!sha_source.exists()) && create_checksum {
+    if !sha_source.exists() {
         checksum::generate_file_checksum(&file_source)
             .map_err(ExportFileError::generate_missing_checksum(&file_source))?;
     }
@@ -333,7 +332,6 @@ fn write_contents(
     source: &Utf8PathBuf,
     dir: &Utf8PathBuf,
     secrets: &[Utf8PathBuf],
-    create_checksum: bool,
     passphrase: &str,
 ) -> Result<(), ExportError> {
     println!("Exporting secrets... ");
@@ -341,7 +339,7 @@ fn write_contents(
         print!("exporting '{file_rel_path}'... ");
         std::io::stdout().flush().unwrap();
 
-        export_file(file_rel_path, source, dir, create_checksum, passphrase)
+        export_file(file_rel_path, source, dir, passphrase)
             .map_err(ExportError::export_file(file_rel_path))
             .inspect_err(|_| println!("error"))?;
         println!("ok");
@@ -366,7 +364,6 @@ fn build_snapshot(
     container: &Utf8PathBuf,
     name: &str,
     secrets: &[Utf8PathBuf],
-    create_checksum: bool,
     passphrase: &str,
 ) -> Result<(), ExportError> {
     let partial_dir = container.join(snapshot::to_partial(name));
@@ -378,7 +375,7 @@ fn build_snapshot(
 
     fs::create_dir(&partial_dir).map_err(ExportError::create_partial(&partial_dir))?;
 
-    if let Err(e) = write_contents(source, &partial_dir, secrets, create_checksum, passphrase) {
+    if let Err(e) = write_contents(source, &partial_dir, secrets, passphrase) {
         let _ = fs::remove_dir_all(&partial_dir);
         return Err(e);
     }
@@ -388,12 +385,7 @@ fn build_snapshot(
     Ok(())
 }
 
-pub fn export(
-    source: String,
-    target: String,
-    create_checksum: bool,
-    passphrase: String,
-) -> Result<(), ExportError> {
+pub fn export(source: String, target: String, passphrase: String) -> Result<(), ExportError> {
     let source = {
         let path = Utf8PathBuf::from(&source);
         if !path.exists() {
@@ -421,14 +413,7 @@ pub fn export(
     remove_stale_partials(&target).map_err(ExportError::remove_stale_partials(&target))?;
 
     let name = snapshot::new_export();
-    build_snapshot(
-        &source,
-        &target,
-        &name,
-        &secrets,
-        create_checksum,
-        &passphrase,
-    )?;
+    build_snapshot(&source, &target, &name, &secrets, &passphrase)?;
 
     println!("Export completed successfully!");
     println!("Snapshot: {name}");
