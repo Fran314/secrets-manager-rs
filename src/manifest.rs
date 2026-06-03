@@ -42,6 +42,27 @@ fn to_valid_path(path: &str) -> Result<Utf8PathBuf, InvalidPath> {
     Ok(path)
 }
 
+// Normalize paths by removing leading `./` so that './a/b' and `a/b` match component-wise. Note
+// that paths are already normalized by Utf8PathBuf, except for the leading CurDir component. '..'
+// components are treated as not valid.
+pub fn normalize_selection_path(path: &str) -> Result<Utf8PathBuf, InvalidPath> {
+    let original = Utf8PathBuf::from(path);
+
+    let mut normalized = Utf8PathBuf::new();
+    for component in original.components() {
+        match component {
+            Utf8Component::Normal(c) => normalized.push(c),
+            Utf8Component::CurDir => {}
+
+            Utf8Component::RootDir => return Err(InvalidPath::Root(original)),
+            Utf8Component::Prefix(_) => unreachable!("Utf8Component::Prefix cannot occur in Unix"),
+            Utf8Component::ParentDir => return Err(InvalidPath::Parent(original)),
+        }
+    }
+
+    Ok(normalized)
+}
+
 #[derive(Error, Debug)]
 pub enum InvalidEntry {
     #[error("invalid path: {0}")]

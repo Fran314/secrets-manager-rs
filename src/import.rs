@@ -224,6 +224,9 @@ pub enum ImportError {
     #[error("target path '{0}' is not a directory")]
     TargetNotDir(Utf8PathBuf),
 
+    #[error("invalid selected secret path: {0}")]
+    InvalidSelection(manifest::InvalidPath),
+
     #[error("requested secret '{0}' is not present in the export")]
     PathNotInExport(Utf8PathBuf),
 
@@ -299,7 +302,8 @@ pub fn import(
     } else {
         let mut selected = Vec::new();
         for path in &paths {
-            let path = Utf8PathBuf::from(path);
+            let path = manifest::normalize_selection_path(path)
+                .map_err(ImportError::InvalidSelection)?;
             match available.iter().find(|s| s.path == path) {
                 Some(secret) => selected.push(secret.clone()),
                 None => return Err(ImportError::PathNotInExport(path)),
