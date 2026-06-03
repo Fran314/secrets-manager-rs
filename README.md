@@ -153,7 +153,7 @@ To import to a remote host, run:
 
 ```bash
 # secs-man has to be installed on the remote for the script import to work
-secs-man-ssh import <user@host> <remote-secrets-dir> <local-container>
+secs-man-ssh import <user@host> <local-container> <remote-secrets-dir>
 
 # The flow is the following:
 # 1. the latest snapshot gets imported to a temporary local directory with the `--skip-chown-chmod` flag, so that it can be sudo-less read and copied to the remote host

@@ -25,7 +25,7 @@
 #
 # Usage:
 #   secs-man-ssh export <user@host> <remote-secrets-dir> <local-container>
-#   secs-man-ssh import <user@host> <remote-secrets-dir> <local-container>
+#   secs-man-ssh import <user@host> <local-container> <remote-secrets-dir>
 #
 # export: back up the remote's secrets into the local container, encrypting
 #         locally (a new timestamped snapshot is created in <local-container>).
@@ -43,20 +43,25 @@ usage() {
     {
         echo "usage:"
         echo "  secs-man-ssh export <user@host> <remote-secrets-dir> <local-container>"
-        echo "  secs-man-ssh import <user@host> <remote-secrets-dir> <local-container>"
+        echo "  secs-man-ssh import <user@host> <local-container> <remote-secrets-dir>"
     } >&2
 
     exit 2
 }
 
 [ $# -eq 4 ] || usage
-direction=$1
+subcommand=$1
 ssh_target=$2
-remote_secrets=$3
-local_container=$4
 
-case "$direction" in
-export | import) ;;
+case "$subcommand" in
+export)
+    remote_secrets=$3
+    local_container=$4
+    ;;
+import)
+    local_container=$3
+    remote_secrets=$4
+    ;;
 *) usage ;;
 esac
 
@@ -90,7 +95,7 @@ local_stg=$(mktemp -d)
 remote_stg=$(ssh "$ssh_target" 'mktemp -d')
 [ "$remote_stg" != "" ] || error "failed to create remote staging dir"
 
-if [[ "$direction" == "export" ]]; then
+if [[ "$subcommand" == "export" ]]; then
     echo "Staging remote secrets..."
     ssh -t "$ssh_target" \
         "sudo -p '[sudo] password for $ssh_target: ' sh -c 'cp -a -- \"$remote_secrets/.\" \"$remote_stg/\" && chown -R -- \"\$SUDO_USER\" \"$remote_stg\"'"
@@ -103,7 +108,7 @@ if [[ "$direction" == "export" ]]; then
     secs-man export "$local_stg" "$local_container"
     remove_local_stg
 
-elif [[ "$direction" == "import" ]]; then
+elif [[ "$subcommand" == "import" ]]; then
     echo "Decrypting locally..."
     secs-man import --skip-chown-chmod "$local_container" "$local_stg"
 
