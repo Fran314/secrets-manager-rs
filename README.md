@@ -118,6 +118,50 @@ sudo secs-man import /path/to/export/endpoint/export-YYYY-MM-DD_HH-MM-SSZ /path/
 sudo secs-man import /path/to/export/endpoint /path/to/secrets --pick ssh/id_ed25519 wg/wg0.key
 ```
 
+## Usage with remote machines
+
+This tool can be used to deploy and backup secrets on remote machines as well.
+
+The easiest way to export remote secrets is to export them on a temporary
+directory on the remote host, and then copy the exported snapshot over a local
+backup. Similarly, to import a local backup the easiest approach is to copy the
+local snapshot on a temporary directory over the remote host, and then import
+them from there. However, this has the issue that the encryption/decryption
+passphrase has to pass through the remote host, which might be considered
+untrusted.
+
+In order to deploy to / backup from untrusted remote hosts without passing the
+passphrase over the remote, you can use the
+[secs-man-ssh](./scripts/secs-man-ssh) script. This script does not assume
+root-login over SSH (as it might be disabled for security reasons), but it
+assumes that the remote user has `sudo` privileges (in order to let `secs-man`
+run `chown` and `chmod`).
+
+To export from a remote host, run:
+
+```bash
+secs-man-ssh export <user@host> <remote-secrets-dir> <local-backup>
+
+# The flow is the following:
+# 1. the script copies the remote secrets to a temporary directory on the remote host
+# 2. the temporary directory gets chowned to the remote normal user, so that it can be sudo-less read and copied locally
+# 3. the temporary directory is copied on the local host and deleted from the remote host
+# 4. the local directory gets exported to the local backup, then deleted
+```
+
+To import to a remote host, run:
+
+```bash
+# secs-man has to be installed on the remote for the script import to work
+secs-man-ssh import <user@host> <remote-secrets-dir> <local-container>
+
+# The flow is the following:
+# 1. the latest snapshot gets imported to a temporary local directory with the `--skip-chown-chmod` flag, so that it can be sudo-less read and copied to the remote host
+# 2. the local directory gets copied to the remote host in a temporary directory, and deleted from the local host
+# 3. the remote temporary directory get imported to the remote secrets directory with `--from-plaintext`, as the files have already been decrypted
+# 4. the remote temporary directory is deleted
+```
+
 ## Interoperability
 
 ### Export

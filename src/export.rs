@@ -143,8 +143,11 @@ pub enum ExportAdditionalError {
     #[error("failed to copy executable to export\n{0}")]
     CopyExe(std::io::Error),
 
-    #[error("failed to copy manifest to export\n{0}")]
-    CopyManifest(std::io::Error),
+    #[error("failed to read manifest to copy it to export\n{0}")]
+    ReadManifest(std::io::Error),
+
+    #[error("failed to write manifest to export\n{0}")]
+    WriteManifest(std::io::Error),
 
     #[error("failed to generate checksum for exported file '{0}'\n{1}")]
     GenerateChecksum(Utf8PathBuf, checksum::ChecksumError),
@@ -189,8 +192,11 @@ fn export_additional(
     let manifest_name = Utf8PathBuf::from(manifest::MANIFEST_FILENAME);
     let manifest_source = source.join(&manifest_name);
     let manifest_target = target.join(&manifest_name);
-    fs::copy(&manifest_source, &manifest_target)
-        .map_err(ExportAdditionalError::CopyManifest)
+    let manifest_content = fs::read(&manifest_source)
+        .map_err(ExportAdditionalError::ReadManifest)
+        .inspect_err(|_| println!("error"))?;
+    fs::write(&manifest_target, manifest_content)
+        .map_err(ExportAdditionalError::WriteManifest)
         .inspect_err(|_| println!("error"))?;
     checksum::append_checksum(target, &manifest_name)
         .map_err(ExportAdditionalError::generate_checksum(&manifest_target))?;

@@ -39,11 +39,18 @@ fn execute() -> Result<()> {
             export_dir,
             secrets_dir,
             pick,
+            from_plaintext,
+            skip_chown_chmod,
         } => {
-            let passphrase = rpassword::prompt_password("Enter passphrase: ")?;
-            println!();
+            let source_type = if from_plaintext {
+                import::SourceType::Plaintext
+            } else {
+                let passphrase = rpassword::prompt_password("Enter passphrase: ")?;
+                println!();
+                import::SourceType::Encrypted { passphrase }
+            };
 
-            import::import(export_dir, secrets_dir, pick, passphrase)?;
+            import::import(export_dir, secrets_dir, pick, source_type, skip_chown_chmod)?;
         }
     };
 

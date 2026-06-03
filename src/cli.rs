@@ -33,6 +33,14 @@ pub enum Command {
         /// Restore only these specific secrets (relative paths). If omitted, the whole export is imported
         #[clap(long, value_name = "path", num_args = 1..)]
         pick: Vec<String>,
+
+        /// Treat the source as already-decrypted plaintext (skip decryption, no passphrase prompt)
+        #[clap(long)]
+        from_plaintext: bool,
+
+        /// Do not apply the manifest's owner/mode to restored files (leave them owned by the runner at 0600)
+        #[clap(long)]
+        skip_chown_chmod: bool,
     },
 }
 

@@ -13,6 +13,11 @@ use crate::{
     utf8path_ext::ExtraUtf8Path,
 };
 
+pub enum SourceType {
+    Encrypted { passphrase: String },
+    Plaintext,
+}
+
 #[derive(Error, Debug)]
 pub enum ImportFileError {
     #[error("failed to read source file at '{0}'\n{1}")]
@@ -106,19 +111,28 @@ fn import_file(
     secret: &manifest::Secret,
     source: &Utf8PathBuf,
     target: &Utf8PathBuf,
-    passphrase: &str,
+    source_type: &SourceType,
+    skip_chown_chmod: bool,
 ) -> Result<(), ImportFileError> {
     let file_rel_path = &secret.path;
-    let file_source = source.join(file_rel_path).add_extension("age");
     let file_target = target.join(file_rel_path);
 
     let sha_source = source.join(file_rel_path).add_extension("sha256");
     let sha_target = target.join(file_rel_path).add_extension("sha256");
 
-    let encrypted_content =
-        fs::read(&file_source).map_err(ImportFileError::read_fail(&file_source))?;
-    let decrypted_content = crypto::decrypt(encrypted_content, passphrase)
-        .map_err(ImportFileError::decryption_fail(&file_source))?;
+    let file_content = match source_type {
+        SourceType::Encrypted { passphrase } => {
+            let file_source = source.join(file_rel_path).add_extension("age");
+            let encrypted_content =
+                fs::read(&file_source).map_err(ImportFileError::read_fail(&file_source))?;
+            crypto::decrypt(encrypted_content, passphrase)
+                .map_err(ImportFileError::decryption_fail(&file_source))?
+        }
+        SourceType::Plaintext => {
+            let file_source = source.join(file_rel_path);
+            fs::read(&file_source).map_err(ImportFileError::read_fail(&file_source))?
+        }
+    };
 
     if let Some(parent) = file_rel_path.parent() {
         let ancestors = {
@@ -143,22 +157,26 @@ fn import_file(
         }
     }
 
-    safe_fs::safe_write(&file_target, decrypted_content)
+    safe_fs::safe_write(&file_target, file_content)
         .map_err(ImportFileError::safe_write(&file_target))?;
-    if let Some(mode) = secret.mode {
-        chmod_file(&file_target, mode)?;
-    }
-    if let Some(owner) = &secret.owner {
-        chown(&file_target, owner)?;
+    if !skip_chown_chmod {
+        if let Some(mode) = secret.mode {
+            chmod_file(&file_target, mode)?;
+        }
+        if let Some(owner) = &secret.owner {
+            chown(&file_target, owner)?;
+        }
     }
 
     let sha_content = fs::read(&sha_source).map_err(ImportFileError::read_fail(&sha_source))?;
 
     safe_fs::safe_write(&sha_target, sha_content)
         .map_err(ImportFileError::safe_write(&sha_target))?;
-    chmod_file(&sha_target, 0o600)?;
-    if let Some(owner) = &secret.owner {
-        chown(&sha_target, owner)?;
+    if !skip_chown_chmod {
+        chmod_file(&sha_target, 0o600)?;
+        if let Some(owner) = &secret.owner {
+            chown(&sha_target, owner)?;
+        }
     }
 
     checksum::verify_file_checksum(&file_target)
@@ -251,7 +269,8 @@ pub fn import(
     source: String,
     target: String,
     paths: Vec<String>,
-    passphrase: String,
+    source_type: SourceType,
+    skip_chown_chmod: bool,
 ) -> Result<(), ImportError> {
     let source = {
         let path = Utf8PathBuf::from(&source);
@@ -288,13 +307,15 @@ pub fn import(
         snapshot::SourceKind::Neither => return Err(ImportError::NotSnapshotOrContainer(source)),
     };
 
-    print!("Verifying source integrity... ");
-    std::io::stdout().flush().unwrap();
-    checksum::verify_checksums(&source)
-        .map_err(ImportError::VerifySource)
-        .inspect_err(|_| println!("error"))?;
-    println!("ok");
-    println!();
+    if matches!(source_type, SourceType::Encrypted { .. }) {
+        print!("Verifying source integrity... ");
+        std::io::stdout().flush().unwrap();
+        checksum::verify_checksums(&source)
+            .map_err(ImportError::VerifySource)
+            .inspect_err(|_| println!("error"))?;
+        println!("ok");
+        println!();
+    }
 
     let available = manifest::load(&source).map_err(ImportError::LoadManifest)?;
 
@@ -376,7 +397,7 @@ pub fn import(
         print!("importing '{file}'... ");
         std::io::stdout().flush().unwrap();
 
-        import_file(secret, &source, &target, &passphrase)
+        import_file(secret, &source, &target, &source_type, skip_chown_chmod)
             .map_err(ImportError::import_file(file))
             .inspect_err(|_| println!("error"))?;
         println!("ok");
