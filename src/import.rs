@@ -145,7 +145,9 @@ fn import_file(
 
     safe_fs::safe_write(&file_target, decrypted_content)
         .map_err(ImportFileError::safe_write(&file_target))?;
-    chmod_file(&file_target, secret.mode)?;
+    if let Some(mode) = secret.mode {
+        chmod_file(&file_target, mode)?;
+    }
     if let Some(owner) = &secret.owner {
         chown(&file_target, owner)?;
     }

@@ -1,8 +1,14 @@
-use std::fs;
+use std::{
+    fs::{self, OpenOptions},
+    io::Write,
+    os::unix::fs::OpenOptionsExt,
+};
 
 use thiserror::Error;
 
 use camino::Utf8PathBuf;
+
+use crate::utf8path_ext::ExtraUtf8Path;
 
 #[derive(Error, Debug)]
 pub enum SafeFsError {
@@ -39,18 +45,38 @@ where
 {
     let content = content.as_ref();
 
-    match path.exists() {
-        true => {
-            let actual_content = fs::read(path).map_err(SafeFsError::read_existing(path))?;
+    if path.exists() {
+        let actual_content = fs::read(path).map_err(SafeFsError::read_existing(path))?;
 
-            if content != actual_content {
-                return Err(SafeFsError::content_mismatch(path));
-            }
+        if content != actual_content {
+            return Err(SafeFsError::content_mismatch(path));
         }
-        false => {
-            fs::write(path, content).map_err(SafeFsError::write(path))?;
-        }
+
+        return Ok(());
     }
 
-    Ok(())
+    let tmp = path.add_extension("partial-import");
+    if tmp.exists() {
+        fs::remove_file(&tmp).map_err(SafeFsError::write(&tmp))?;
+    }
+
+    let commit = || {
+        // staged sensitive content: born 0600 so it is never world-readable in
+        // the window between creation and the caller's final chmod
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&tmp)
+            .map_err(SafeFsError::write(&tmp))?;
+        file.write_all(content).map_err(SafeFsError::write(&tmp))?;
+        drop(file);
+
+        fs::rename(&tmp, path).map_err(SafeFsError::write(path))?;
+        Ok(())
+    };
+
+    commit().inspect_err(|_| {
+        let _ = fs::remove_file(&tmp);
+    })
 }

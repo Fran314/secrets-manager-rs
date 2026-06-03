@@ -5,13 +5,12 @@ use thiserror::Error;
 use crate::chown_spec::{ChownSpec, InvalidChownSpec};
 
 pub const MANIFEST_FILENAME: &str = ".secrets-manifest";
-pub const DEFAULT_MODE: u32 = 0o600;
 
 #[derive(Debug, Clone)]
 pub struct Secret {
     pub path: Utf8PathBuf,
     pub owner: Option<ChownSpec>,
-    pub mode: u32,
+    pub mode: Option<u32>,
 }
 
 #[derive(Error, Debug)]
@@ -111,11 +110,7 @@ fn parse_entry(line: &str) -> Result<Secret, InvalidEntry> {
         }
     }
 
-    Ok(Secret {
-        path,
-        owner,
-        mode: mode.unwrap_or(DEFAULT_MODE),
-    })
+    Ok(Secret { path, owner, mode })
 }
 
 #[derive(Error, Debug)]
