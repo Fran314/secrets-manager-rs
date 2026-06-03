@@ -19,7 +19,10 @@ fn execute() -> Result<()> {
     let args = cli::args();
 
     match args.command {
-        cli::Command::Export { source, target } => {
+        cli::Command::Export {
+            secrets_dir,
+            export_dir,
+        } => {
             let passphrase = rpassword::prompt_password("Enter passphrase: ")?;
             let passphrase_check = rpassword::prompt_password("Enter passphrase again: ")?;
             if passphrase != passphrase_check {
@@ -27,20 +30,20 @@ fn execute() -> Result<()> {
             }
             println!();
 
-            export::export(source, target, passphrase)?;
+            export::export(secrets_dir, export_dir, passphrase)?;
         }
-        cli::Command::VerifyExport { source } => {
-            verify_export::verify_export(source)?;
+        cli::Command::VerifyExport { export_dir } => {
+            verify_export::verify_export(export_dir)?;
         }
         cli::Command::Import {
-            source,
-            target,
-            paths,
+            export_dir,
+            secrets_dir,
+            pick,
         } => {
             let passphrase = rpassword::prompt_password("Enter passphrase: ")?;
             println!();
 
-            import::import(source, target, paths, passphrase)?;
+            import::import(export_dir, secrets_dir, pick, passphrase)?;
         }
     };
 

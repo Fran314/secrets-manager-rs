@@ -62,9 +62,7 @@ coreutils, `age` and a terminal.
 This tool allows to export and encrypt files from a given source directory, and
 to recover them by importing to the same directory. The recommended way to use
 this tool is to have all your "secrets" (keys, files, ...) in a centralized
-directory. By default, the directory `/secrets` is used. This can be changed
-with the `--source` flag during export and with the `--target` flag during
-import.
+directory.
 
 At the root of the secrets directory there should be a `.secrets-manifest`
 plaintext file containing the list of secrets to be managed, in the form of
@@ -90,7 +88,7 @@ the inner chown call will fail).
 To export your secrets, run
 
 ```bash
-sudo secs-man export /path/to/export/endpoint
+sudo secs-man export /path/to/secrets /path/to/export/endpoint
 ```
 
 To verify the integrity of an existing export (see note below), run
@@ -111,10 +109,13 @@ To import your secrets, run
 
 ```bash
 # to import the latest snapshot
-sudo secs-man import /path/to/export/endpoint
+sudo secs-man import /path/to/export/endpoint /path/to/secrets
 
 # to import a specific snapshot
-sudo secs-man import /path/to/export/endpoint/export-YYYY-MM-DD_HH-MM-SSZ
+sudo secs-man import /path/to/export/endpoint/export-YYYY-MM-DD_HH-MM-SSZ /path/to/secrets
+
+# to import only specific secrets
+sudo secs-man import /path/to/export/endpoint /path/to/secrets --pick ssh/id_ed25519 wg/wg0.key
 ```
 
 ## Interoperability
