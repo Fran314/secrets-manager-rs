@@ -92,6 +92,7 @@ remote_stg=$(ssh "$ssh_target" 'mktemp -d')
 
 if [[ "$direction" == "export" ]]; then
     echo "Staging remote secrets..."
+    echo "Prompting for remote sudo password"
     ssh -t "$ssh_target" \
         "sudo sh -c 'cp -a -- \"$remote_secrets/.\" \"$remote_stg/\" && chown -R -- \"\$SUDO_USER\" \"$remote_stg\"'"
 
@@ -112,6 +113,7 @@ elif [[ "$direction" == "import" ]]; then
     remove_local_stg
 
     echo "Applying on remote..."
+    echo "Prompting for remote sudo password"
     ssh -t "$ssh_target" \
         "sudo secs-man import --from-plaintext -- \"$remote_stg\" \"$remote_secrets\""
     remove_remote_stg
