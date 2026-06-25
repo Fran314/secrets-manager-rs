@@ -114,12 +114,12 @@ the correct permissions during import. See
 [`.secrets-manifest.example`](./.secrets-manifest.example) for the syntax.
 
 During an export, the files listed in the manifest get encrypted through `age`
-with a passphrase requested through an interactive prompt (secs-man never reads
-it from a file, an argument or an environment variable). The same passphrase is
-requested again on import, to decrypt the files. The integrity of the files is
-guaranteed by a companion `*.sha256` file, which gets automatically generated if
-missing. The encrypted files get exported to a timestamped snapshot inside the
-export target directory.
+with a passphrase requested through an interactive prompt (`secs-man` never
+reads it from a file, an argument or an environment variable). The same
+passphrase is requested again on import, to decrypt the files. The integrity of
+the files is guaranteed by a companion `*.sha256` file, which gets automatically
+generated if missing. The encrypted files get exported to a timestamped snapshot
+inside the export target directory.
 
 The files can then be decrypted and imported either by pointing to the export
 target directory (to import the latest snapshot) or to a specific snapshot
