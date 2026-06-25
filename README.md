@@ -1,11 +1,13 @@
 # secs-man
 
-secs-man is an interoperable secrets manager to manage backups of secrets.
+`secs-man` is a tool for managing backups of secrets with tool-independence in
+mind: if you encrypt your secrets with this software, you should be able to
+decrypt and restore them without this software. Even if `secs-man` disappears
+from the face of the Earth, your data is still accessible.
 
-> [!CAUTION]
-> This repository recently moved to v0.3.0-dev which is a **breaking change**,
-> with a reduction in scope of the project. Read the comment of the commit for
-> v0.3.0 to see the breaking changes and the motivations
+`secs-man` can be used to manage secrets of local and remote machines, and is
+ideal for creating local-only backups for data that is too sensitive to be
+backed up somewhere in the cloud.
 
 ## Philosophy
 
@@ -16,27 +18,21 @@ important data.
 
 Any software that forces you to remain in its ecosystem after use (such as: "if
 you encrypt it with this software, you can only decrypt it with this software")
-makes you dependant on it.
+makes you dependent on it.
 
 Hence, the encryption, decryption and restore of your important data should be
 decoupled, that is if you encrypted it with software X, you should still be able
 to decrypt it without software X.
 
-This is the meaning of "interoperable" in the description: if you encrypt your
-secrets with this software, you should be able to decrypt and restore them
-without this software. Even if `secs-man` disappears from the face of the Earth,
-your data is still accessible.
-
 ### The practice
 
 In practice, you cannot create a setup where your secrets are 100% safe from
-data loss. Even if your software X is interoperable with Y, Z and W, you'll
-still lose access to your data if X, Y, Z and W all stopped working at the same
-time.
+data loss. Even if your software X is compatible with Y, Z and W, you'll still
+lose access to your data if X, Y, Z and W all stopped working at the same time.
 
-What you do in practice is make sure to be dependant only on technologies that
-are "standards" or close to. I'm ok with being dependant on the existence of
-bash interpreters, usb ports and linux machines.
+What you do in practice is make sure to be dependent only on technologies that
+are "standards" or close to. I'm ok with being dependent on the existence of
+bash interpreters, USB ports and Linux machines.
 
 The true goal of secs-man then becomes being perfectly reproducible only with:
 
@@ -50,12 +46,57 @@ The true goal of secs-man then becomes being perfectly reproducible only with:
 > and nice bindings in Rust.
 
 This ensures that even if anything happened to this software that prevented you
-from using it again, assuming that `age` still exist and that you're willing to
+from using it again, assuming that `age` still exists and that you're willing to
 spend 30 minutes of your life, you could still recover all your secrets.
 
-The section [interoperability](#interoperability) explains how to import the
+The section [manual recovery](#manual-recovery) explains how to import the
 secrets exported by this software without using this software, that is only with
 coreutils, `age` and a terminal.
+
+## Installation
+
+`secs-man` is not published anywhere (it is not a published crate, nor is it on
+nixpkgs, the AUR or similar). It can only be installed directly from this
+repository, in one of the following ways.
+
+### With `nix run`
+
+If you only need to run `secs-man` occasionally, you can run it directly without
+installing it (requires flakes enabled)
+
+```bash
+nix run github:Fran314/secrets-manager-rs -- export /path/to/secrets /path/to/export/endpoint
+```
+
+### Through your Nix configuration
+
+To make `secs-man` available system-wide, you can import this repository in your
+Nix configuration with `fetchGit` and add the resulting package to
+`environment.systemPackages` (or `home.packages` with home-manager)
+
+```nix
+let
+  secs-man = pkgs.callPackage "${builtins.fetchGit {
+    url = "https://github.com/Fran314/secrets-manager-rs.git";
+    ref = "main";
+    # rev = "<commit>"; # pin a specific commit for reproducibility
+  }}/default.nix" { };
+in
+# add `secs-man` to environment.systemPackages or home.packages
+```
+
+### With `cargo`
+
+If you are not on NixOS, you can install the `secs-man` binary by pointing
+`cargo` at this repository
+
+```bash
+cargo install --git https://github.com/Fran314/secrets-manager-rs
+```
+
+> note that none of these methods install the [secs-man-ssh](./scripts/secs-man-ssh)
+> script needed for [remote machines](#usage-with-remote-machines): it is a
+> standalone script that has to be copied from this repository separately
 
 ## Usage
 
@@ -158,11 +199,11 @@ secs-man-ssh import <user@host> <local-container> <remote-secrets-dir>
 # The flow is the following:
 # 1. the latest snapshot gets imported to a temporary local directory with the `--skip-chown-chmod` flag, so that it can be sudo-less read and copied to the remote host
 # 2. the local directory gets copied to the remote host in a temporary directory, and deleted from the local host
-# 3. the remote temporary directory get imported to the remote secrets directory with `--from-plaintext`, as the files have already been decrypted
+# 3. the remote temporary directory gets imported to the remote secrets directory with `--from-plaintext`, as the files have already been decrypted
 # 4. the remote temporary directory is deleted
 ```
 
-## Interoperability
+## Manual recovery
 
 ### Export
 
@@ -181,7 +222,7 @@ Note that:
 - during the export, the existing checksum of the plaintext file is exported
   next to the encrypted file
 - after the export, another checksum is created for all the encrypted files to
-  enable to check the integrity of the export on a later moment.
+  enable to check the integrity of the export at a later moment.
 
 ### Verify Export
 
