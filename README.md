@@ -94,9 +94,10 @@ If you are not on NixOS, you can install the `secs-man` binary by pointing
 cargo install --git https://github.com/Fran314/secrets-manager-rs
 ```
 
-> note that none of these methods install the [secs-man-ssh](./scripts/secs-man-ssh)
-> script needed for [remote machines](#usage-with-remote-machines): it is a
-> standalone script that has to be copied from this repository separately
+> note that none of these methods install the
+> [secs-man-ssh](./scripts/secs-man-ssh) script needed for
+> [remote machines](#usage-with-remote-machines): it is a standalone script that
+> has to be copied from this repository separately
 
 ## Usage
 
@@ -113,10 +114,12 @@ the correct permissions during import. See
 [`.secrets-manifest.example`](./.secrets-manifest.example) for the syntax.
 
 During an export, the files listed in the manifest get encrypted through `age`
-with a specified passphrase. The integrity of the files is guaranteed by a
-companion `*.sha256` file, which gets automatically generated if missing. The
-encrypted files get exported to a timestamped snapshot inside the export target
-directory.
+with a passphrase requested through an interactive prompt (secs-man never reads
+it from a file, an argument or an environment variable). The same passphrase is
+requested again on import, to decrypt the files. The integrity of the files is
+guaranteed by a companion `*.sha256` file, which gets automatically generated if
+missing. The encrypted files get exported to a timestamped snapshot inside the
+export target directory.
 
 The files can then be decrypted and imported either by pointing to the export
 target directory (to import the latest snapshot) or to a specific snapshot
@@ -203,7 +206,7 @@ secs-man-ssh import <user@host> <local-container> <remote-secrets-dir>
 # 4. the remote temporary directory is deleted
 ```
 
-## Manual recovery
+## Manual Recovery
 
 ### Export
 
